@@ -50,7 +50,7 @@ jobs:
 
       - name: Build
         # VITE_DEV_MODE is deliberately unset so deployed builds use the real Bloxity SDK/CDN.
-        # No server URL: built games always reach Boat-race-with-99-engine-backend through the
+        # No server URL: built games always reach Shoot-a-bullet-backend through the
         # Bloxity matchmaker (Legion.SDK.net.resolveEndpoint in src/bloxity.js).
         run: |
           if [ "${{ steps.channel.outputs.channel }}" = "prod" ]; then

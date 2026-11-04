@@ -149,3 +149,9 @@
   width: var(--side);
   height: var(--side);
 }
+
+/* The shot cinematic hides the touch controls (the player is frozen anyway). */
+.in-cine .touch-root {
+  opacity: 0;
+  visibility: hidden;
+}

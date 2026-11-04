@@ -1,0 +1,376 @@
+/* The reference windows (hud.js renderWindow): Playtime Gifts, Rebirth, Evolve Ammo,
+   plus the active boost chips under the 2X passes.
+   Sized in --wu: 1vh on desktop (the reference is ~75 x 52 wu), never below 6px so phone
+   landscape still fills the height, and capped by the width so 4 gift cards fit a 360px phone. */
+.modal-back {
+  --wu: min(1.72vh, 1.25vw, max(1vh, 6px));
+}
+.modal-back.is-win {
+  background: rgba(10, 8, 30, 0.18);
+}
+@media (pointer: fine) {
+  .modal-back.is-win {
+    background: transparent;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+}
+/* Toasts ("+100 Wins!", "Ready in 07:05!") show over the window, not blurred behind it. */
+.hud .toast {
+  z-index: 6;
+}
+.modal-back.is-win .modal,
+.modal-back:not(.is-win) .win {
+  display: none;
+}
+.modal-back.open .win {
+  animation: win-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+@keyframes win-in {
+  from { transform: scale(0.85); opacity: 0; }
+}
+.win {
+  --ol: #15121c;
+  position: relative;
+  width: calc(71 * var(--wu));
+  box-sizing: border-box;
+  border: max(2px, calc(0.32 * var(--wu))) solid #1b1b24;
+  background: rgba(64, 74, 66, 0.72);
+  font-size: calc(3.6 * var(--wu));
+  line-height: 1;
+}
+.win button {
+  line-height: 1;
+}
+.win.win-gifts {
+  width: calc(75 * var(--wu));
+}
+/* Thick outline that scales with the text, like the reference's chunky labels. */
+.hud .win,
+.hud .win button {
+  text-shadow:
+    0.065em 0 0 var(--ol), -0.065em 0 0 var(--ol), 0 0.065em 0 var(--ol), 0 -0.065em 0 var(--ol),
+    0.046em 0.046em 0 var(--ol), -0.046em 0.046em 0 var(--ol), 0.046em -0.046em 0 var(--ol), -0.046em -0.046em 0 var(--ol),
+    0 0.1em 0 var(--ol);
+}
+.win-head {
+  display: flex;
+  align-items: center;
+  height: calc(9.2 * var(--wu));
+  box-sizing: border-box;
+  padding: 0 calc(1 * var(--wu)) 0 calc(1.2 * var(--wu));
+  border-width: 0 0 max(2px, calc(0.32 * var(--wu)));
+  box-shadow: inset 0 calc(-0.5 * var(--wu)) 0 rgba(0, 0, 0, 0.12), inset 0 calc(0.4 * var(--wu)) 0 rgba(255, 255, 255, 0.3);
+}
+.win-head.lime {
+  background: linear-gradient(90deg, #5fdc2c, #8fe824 45%, #bff01c);
+}
+.win-head.pink {
+  background: linear-gradient(180deg, #ff4a98, #ff2f80);
+}
+.win-icon {
+  display: block;
+  flex: none;
+  width: calc(7.4 * var(--wu));
+  height: calc(7.4 * var(--wu));
+  margin: calc(-1.4 * var(--wu)) calc(0.4 * var(--wu)) 0 calc(-0.8 * var(--wu));
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.35));
+}
+.win-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.win-title {
+  font-size: calc(5.2 * var(--wu));
+  white-space: nowrap;
+}
+.win-x {
+  margin-left: auto;
+  width: calc(7 * var(--wu));
+  height: calc(6.6 * var(--wu));
+  padding: 0;
+  font-size: calc(5.4 * var(--wu));
+  border-radius: calc(0.3 * var(--wu));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Small window buttons get a bigger invisible hit area (44px+ tap targets on phones). */
+.win-x::after,
+.w-cta::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+.win-body {
+  padding: calc(1.6 * var(--wu)) calc(2 * var(--wu)) calc(1.8 * var(--wu));
+}
+
+/* --- Playtime Gifts: 4 x 2 cards; the Claim! / countdown button hangs off each card's bottom edge. */
+.gift-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  column-gap: calc(1.4 * var(--wu));
+  row-gap: calc(3.2 * var(--wu));
+  padding-bottom: calc(1.6 * var(--wu));
+}
+.gift {
+  height: calc(17.4 * var(--wu));
+  padding: calc(0.5 * var(--wu)) 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  border-radius: calc(0.3 * var(--wu));
+  box-shadow: inset 0 0 0 calc(0.55 * var(--wu)) rgba(255, 255, 255, 0.32), inset 0 calc(-0.9 * var(--wu)) 0 rgba(0, 0, 0, 0.12), 0 2px 0 rgba(0, 0, 0, 0.25);
+}
+.gift:active {
+  transform: none;
+}
+.gc-gold { background: linear-gradient(180deg, #ffd61f, #ffb40c); }
+.gc-magenta { background: linear-gradient(180deg, #e03cf2, #b41ee0); }
+.gc-sky { background: linear-gradient(180deg, #4fd0ff, #1fa0ff); }
+.gc-rainbow { background: linear-gradient(135deg, #ff3a3a, #ff9a1f 20%, #ffe01f 37%, #3fe04a 54%, #2fc3ff 70%, #6a5bff 85%, #e23dff); }
+.g-title {
+  font-size: calc(3.3 * var(--wu));
+  white-space: nowrap;
+  margin-top: calc(0.2 * var(--wu));
+}
+.g-title.long {
+  font-size: calc(2.45 * var(--wu));
+  margin-top: calc(0.75 * var(--wu));
+}
+.g-icon {
+  display: block;
+  line-height: 0;
+}
+.g-icon svg {
+  width: calc(8.4 * var(--wu));
+  height: calc(8.4 * var(--wu));
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.3));
+}
+.g-val {
+  margin-top: calc(-2.4 * var(--wu));
+  font-size: calc(2.7 * var(--wu));
+  white-space: nowrap;
+}
+.g-val.wins {
+  font-size: calc(3.4 * var(--wu));
+  color: #ffe43a;
+}
+.g-btn {
+  position: absolute !important;
+  left: 50%;
+  bottom: calc(-1.7 * var(--wu));
+  transform: translateX(-50%);
+  width: calc(11 * var(--wu));
+  height: calc(4.9 * var(--wu));
+  box-sizing: border-box;
+  border-radius: calc(0.25 * var(--wu));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(2.9 * var(--wu));
+}
+.g-btn.hot { background: linear-gradient(180deg, #ff4a98, #ff2a78); }
+.g-btn.grey { background: linear-gradient(180deg, #a5abb8, #7d8494); }
+.gift[data-st="claimed"] .g-icon,
+.gift[data-st="claimed"] .g-val {
+  opacity: 0.55;
+}
+.gift[data-st="ready"] .g-btn {
+  animation: claim-pulse 1s ease-in-out infinite;
+}
+@keyframes claim-pulse {
+  50% { transform: translateX(-50%) scale(1.07); }
+}
+.gift.claimed-pop {
+  animation: claimed-pop 0.35s ease-out;
+}
+@keyframes claimed-pop {
+  35% { transform: scale(1.08); }
+}
+
+/* --- Rebirth / Evolve: Before -> After columns, the warning, the level bar and two buttons. */
+.ba {
+  display: grid;
+  grid-template-columns: calc(25 * var(--wu)) 1fr calc(25 * var(--wu));
+  align-items: center;
+  justify-items: center;
+  width: calc(61 * var(--wu));
+  margin: 0 auto calc(1 * var(--wu));
+}
+.ba.ev {
+  grid-template-columns: calc(27.5 * var(--wu)) 1fr calc(27.5 * var(--wu));
+  width: calc(65 * var(--wu));
+}
+.ba-labels {
+  font-size: calc(4.3 * var(--wu));
+  margin-bottom: calc(0.9 * var(--wu));
+}
+.ba-labels.ev {
+  font-size: calc(4.5 * var(--wu));
+  margin-bottom: calc(-0.2 * var(--wu));
+}
+.ba-arrow {
+  width: calc(5.2 * var(--wu));
+  height: auto;
+}
+.ba-box {
+  width: 100%;
+  height: calc(7.7 * var(--wu));
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(3.8 * var(--wu));
+  white-space: nowrap;
+}
+.ba-box.yellow { background: linear-gradient(180deg, #ffe51f, #ffc90a); }
+.lime { background: linear-gradient(180deg, #8ff03a, #4fd41f); }
+.rb-warn {
+  text-align: center;
+  color: #ff2d55;
+  font-size: calc(3.5 * var(--wu));
+  margin: calc(0.6 * var(--wu)) 0 calc(0.8 * var(--wu));
+}
+.rb-bar {
+  width: calc(56 * var(--wu));
+  height: calc(6.3 * var(--wu));
+  margin: 0 auto;
+  box-sizing: border-box;
+  background: #173f80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: calc(3.7 * var(--wu));
+}
+.rb-bar::before {
+  z-index: 1;
+}
+.rb-fill {
+  position: absolute !important;
+  inset: 0 auto 0 0;
+  background: linear-gradient(180deg, #33c8ff, #1b92ff);
+  transition: width 0.25s;
+}
+.w-btns {
+  display: flex;
+  justify-content: center;
+  gap: calc(2.2 * var(--wu));
+  margin-top: calc(1.5 * var(--wu));
+}
+.w-cta {
+  width: calc(25 * var(--wu));
+  height: calc(7.8 * var(--wu));
+  padding: 0;
+  border-radius: calc(0.2 * var(--wu));
+  font-size: calc(4.8 * var(--wu));
+  white-space: nowrap;
+}
+.w-cta.skip {
+  background: linear-gradient(180deg, #d63cff, #b41cff);
+  font-size: calc(3.7 * var(--wu));
+}
+.w-cta.off {
+  filter: grayscale(0.75) brightness(0.85);
+}
+.ammo-card {
+  width: 100%;
+  height: calc(24 * var(--wu));
+  box-sizing: border-box;
+  padding: calc(1.1 * var(--wu));
+  border-radius: calc(1 * var(--wu));
+  background: #2a2a31;
+}
+.ammo-in {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: calc(0.9 * var(--wu));
+  box-shadow: inset 0 calc(-0.5 * var(--wu)) 0 rgba(0, 0, 0, 0.18), inset 0 calc(0.4 * var(--wu)) 0 rgba(255, 255, 255, 0.12);
+}
+.ac-slate .ammo-in { background: linear-gradient(180deg, #4e586c, #444d60); }
+.ac-red .ammo-in { background: linear-gradient(180deg, #ee5050, #dc4040); }
+.ammo-in svg {
+  height: calc(13.6 * var(--wu));
+  width: auto;
+  margin: calc(1.2 * var(--wu)) 0 auto;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.3));
+}
+.ammo-in span {
+  font-size: calc(3.8 * var(--wu));
+  white-space: nowrap;
+}
+.ammo-max {
+  margin: auto 0;
+  font-size: calc(6 * var(--wu));
+  color: #ffe23a;
+}
+.ba.mults {
+  margin-top: calc(0.6 * var(--wu));
+  margin-bottom: 0;
+}
+.ammo-mult {
+  display: flex;
+  align-items: center;
+  gap: calc(0.2 * var(--wu));
+  font-size: calc(3.4 * var(--wu));
+  white-space: nowrap;
+}
+.ammo-mult svg,
+.ev-cost svg {
+  width: 1.1em;
+  height: 1.1em;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.4));
+}
+.ev-cost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(0.2 * var(--wu));
+  margin-top: calc(0.3 * var(--wu));
+  font-size: calc(2.9 * var(--wu));
+}
+.hud .ev-cost span {
+  color: #b8123f;
+  --ol: #ff9ab4;
+  text-shadow: 0.045em 0 0 var(--ol), -0.045em 0 0 var(--ol), 0 0.045em 0 var(--ol), 0 -0.045em 0 var(--ol);
+}
+
+/* --- Active boosts from Playtime Gifts, under the 2X passes. */
+.boost-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+}
+.boost-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 4px;
+  border: 2px solid #1b1b24;
+  border-radius: 8px;
+  background: rgba(24, 18, 48, 0.6);
+  font-size: clamp(13px, calc(2 * var(--u)), 20px);
+  white-space: nowrap;
+  text-shadow: -1.5px -1.5px 0 var(--ink), 1.5px -1.5px 0 var(--ink), -1.5px 1.5px 0 var(--ink), 1.5px 1.5px 0 var(--ink);
+}
+.boost-chip svg {
+  width: 1.8em;
+  height: 1.8em;
+  flex: none;
+}
+.boost-chip b {
+  margin-left: auto;
+  color: #ffe23a;
+  font-weight: normal;
+}

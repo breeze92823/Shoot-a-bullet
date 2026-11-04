@@ -1,452 +1,503 @@
-// The on-screen HUD, laid out after the reference screenshot (1920x992):
-//   top-centre   - race timer, 1st/2nd/3rd podium under it
-//   top-right    - round buttons (spin wheel, calendar)
-//   left         - CLAIM! pill + grid of menu tiles (Rebirth, Pets, Boats, ...)
-//   right        - trophies / wins, AUTO TRAIN / AUTO RACE, boosts
-//   bottom       - the three-row race distance bar with every racer's head
-// Everything is sized in reference pixels times --u (set on resize), so it keeps
-// the reference proportions on any screen; hud.css adapts it for touch + portrait.
-// The top-left corner is Boxity's (toolbar + chat feed): blocks slide down clear of it (setReserved).
+// The HUD from the reference shots, as DOM over the canvas:
+//  left: rebirth + wins counters and the Rewards / Rebirth (READY!) / Evolve / Store tiles
+//  top: AUTO WINS; right: 2X WINS / 2X DAMAGE passes
+//  bottom: "<n> Damage", the LEVEL bar (MAX - REBIRTH!), +100K / +1M / +10M
+//  while training: 3 MINIGAMES! / GAMES / AUTO REBIRTH and the purple x2 badge
+//  world-anchored "+2 Damage" / "+12 WINS" popups, a toast line and modal windows:
+//  Playtime Gifts (Rewards), Rebirth and Evolve Ammo are drawn like the reference windows
+//  (`.win`); Store and Games use the plain list modal (`.modal`).
+// Robux purchases are not connected: those buttons say so instead of charging.
 import './hud.css'
-import { clamp, HUD } from './config.js'
-import { head, ICONS, RIBBON } from './hudIcons.js'
-import { feedback } from './audio/index.js'
-import { burst, lastPress } from './juice.js'
+import './windows.css'
+import { Vector3 } from 'three'
+import { AMMO_SKIP_ROBUX, BOOSTS, ECONOMY, PLAYTIME_GIFTS, TRAINERS } from './config.js'
+import * as game from './game.js'
+import * as bloxity from './bloxity.js'
 
-function el(tag, className, html = '') {
+const ICON = {
+  trophy: `<svg viewBox="0 0 64 64"><path d="M14 8h36v6h8c0 12-6 18-13 19-2 5-6 8-9 9v8h8v6H20v-6h8v-8c-3-1-7-4-9-9-7-1-13-7-13-19h8z" fill="#2a1500"/><path d="M17 11h30v9c0 10-6 17-15 17s-15-7-15-17z" fill="#ffc21f"/><path d="M17 11h8v10c0 6 2 11 6 14-8-1-14-7-14-15z" fill="#ffe27a"/><path d="M10 17h7v4c0 3 1 6 2 8-5-2-8-6-9-12zm44 0h-7v4c0 3-1 6-2 8 5-2 8-6 9-12z" fill="#ffb10f"/><rect x="22" y="50" width="20" height="5" fill="#ffb10f"/><circle cx="32" cy="22" r="5" fill="#2f8bff"/><circle cx="30.5" cy="20.5" r="1.6" fill="#bfe1ff"/></svg>`,
+  rebirth: `<svg viewBox="0 0 64 64"><circle cx="32" cy="33" r="25" fill="#1b1b24"/><path d="M32 12a21 21 0 0 1 20 14l5-2-3 14-12-7 5-2a14 14 0 0 0-15-10z" fill="#ff2e3e" stroke="#1b1b24" stroke-width="2"/><path d="M12 33a20 20 0 0 1 20-21v7a14 14 0 0 0-13 14z" fill="#ff2e3e"/><path d="M52 33a20 20 0 0 1-33 15l-4 4-2-14 14 2-4 4a14 14 0 0 0 22-11z" fill="#ffffff" stroke="#1b1b24" stroke-width="2"/><path d="M12 33h7a13 13 0 0 0 4 9l-5 5a20 20 0 0 1-6-14z" fill="#dfe8ff"/></svg>`,
+  gift: `<svg viewBox="0 0 64 64"><rect x="9" y="28" width="46" height="30" rx="3" fill="#7a3df0" stroke="#1b1b24" stroke-width="3"/><rect x="6" y="21" width="52" height="11" rx="3" fill="#9b5cff" stroke="#1b1b24" stroke-width="3"/><rect x="27" y="21" width="10" height="37" fill="#2fb4ff" stroke="#1b1b24" stroke-width="2"/><path d="M32 21c-6-12-20-14-18-5 1 5 10 5 18 5zm0 0c6-12 20-14 18-5-1 5-10 5-18 5z" fill="#2fb4ff" stroke="#1b1b24" stroke-width="3"/></svg>`,
+  bullet: `<svg viewBox="0 0 64 64"><path d="M24 24c0-10 4-18 8-21 4 3 8 11 8 21z" fill="#ff8a2a" stroke="#1b1b24" stroke-width="3"/><path d="M28 22c0-7 2-12 4-15" stroke="#ffc27a" stroke-width="3" fill="none"/><rect x="23" y="23" width="18" height="34" rx="2" fill="#ffc21f" stroke="#1b1b24" stroke-width="3"/><rect x="27" y="26" width="4" height="28" fill="#ffe27a"/><rect x="21" y="54" width="22" height="6" rx="1" fill="#e89a0f" stroke="#1b1b24" stroke-width="3"/></svg>`,
+  basket: `<svg viewBox="0 0 64 64"><path d="M18 26c0-12 28-12 28 0" fill="none" stroke="#1b1b24" stroke-width="8"/><path d="M18 26c0-12 28-12 28 0" fill="none" stroke="#5a6a8a" stroke-width="4"/><path d="M5 25h54l-6 30H11z" fill="#ff2e4a" stroke="#1b1b24" stroke-width="3"/><path d="M5 25h54v6H5z" fill="#ff6b7f" stroke="#1b1b24" stroke-width="3"/><path d="M19 35v15M28 35v15M37 35v15M46 35v15" stroke="#b3122a" stroke-width="4"/></svg>`,
+  pistol: `<svg viewBox="0 0 80 56"><path d="M4 8h66l4 4v10H34l-2 4h-6l-4 26H6l8-26H8L4 22z" fill="#1b1b24"/><path d="M8 11h60l2 2v6H8z" fill="#9aa4b4"/><path d="M8 11h60v3H8z" fill="#d6dde8"/><path d="M12 25h10l-4 23h-8z" fill="#5a6270"/><rect x="66" y="10" width="7" height="5" fill="#1b1b24"/></svg>`,
+  hand: `<svg viewBox="0 0 64 64"><path d="M22 34V12a5 5 0 0 1 10 0v16l2-1a5 5 0 0 1 6 2 5 5 0 0 1 6 2 5 5 0 0 1 7 4v10c0 9-7 15-16 15h-4c-6 0-10-3-13-8l-8-12a5 5 0 0 1 8-6z" fill="#fff" stroke="#1b1b24" stroke-width="3"/></svg>`,
+}
+// Winged sneaker (Speed / Jump Boost), potions (Wins Boost / All In One), the Before -> After
+// arrow, and an ammo cartridge in a tier's colours.
+const shoe = (c, dark) =>
+  `<svg viewBox="0 0 64 64"><path d="M6 46 8 23c1-4 5-5 8-3l7 6c4 4 10 6 16 7l13 3c6 1 9 5 9 10v1H6z" fill="${c}" stroke="#1b1b24" stroke-width="3" stroke-linejoin="round"/><path d="M11 40V25c1-2 3-2 4-1" stroke="rgba(255,255,255,.5)" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M24 29l3-3M29 31l3-3M34 33l3-3" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><path d="M14 22c1-10 9-17 24-19-3 3-4 5-4 7 4-1 8-1 10 0-3 2-6 4-8 6 3 0 6 1 8 2-6 2-13 4-19 8z" fill="#fff" stroke="#1b1b24" stroke-width="2.6" stroke-linejoin="round"/><path d="M20 15c4-4 9-7 15-9M22 19c4-3 9-4 14-4" stroke="#9fd8ff" stroke-width="2" fill="none"/><path d="M4 46h59v4c0 3-2 6-5 6H9c-3 0-5-3-5-6z" fill="#fff" stroke="#1b1b24" stroke-width="3" stroke-linejoin="round"/><path d="M7 51h54" stroke="${dark}" stroke-width="2.4"/></svg>`
+const potion = (fill) =>
+  `<svg viewBox="0 0 64 64"><defs><linearGradient id="pg-rb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff4a4a"/><stop offset=".25" stop-color="#ffd21f"/><stop offset=".5" stop-color="#4fe04a"/><stop offset=".75" stop-color="#2fc3ff"/><stop offset="1" stop-color="#c84dff"/></linearGradient></defs><rect x="25" y="3" width="14" height="9" rx="3" fill="#c98a4a" stroke="#1b1b24" stroke-width="2.6"/><path d="M27 12h10v9c9 3 15 11 15 20 0 12-9 20-20 20S12 53 12 41c0-9 6-17 15-20z" fill="rgba(235,248,255,.85)" stroke="#1b1b24" stroke-width="3" stroke-linejoin="round"/><path d="M15.5 37c3-2 8-3 16-1s13 1 17-1c.5 1.5.5 3 .5 6 0 10-8 17-18 17S14 51 14 41c0-1.5.5-3 1.5-4z" fill="${fill}"/><path d="M20 30c2-3 5-5 7-6" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="22" cy="45" r="2.6" fill="rgba(255,255,255,.75)"/><circle cx="38" cy="50" r="1.8" fill="rgba(255,255,255,.6)"/></svg>`
+const GIFT_ICON = {
+  trophy: ICON.trophy,
+  wingBlue: shoe('#2f8bff', '#1f5fd0'),
+  wingRed: shoe('#ff3346', '#c81a2a'),
+  potionGold: potion('#ffd23a'),
+  potionRainbow: potion('url(#pg-rb)'),
+}
+const ARROW = `<svg class="ba-arrow" viewBox="0 0 48 28"><path d="M3 9h24V3l18 11-18 11v-6H3z" fill="#8fe0ff" stroke="#1b1b24" stroke-width="3" stroke-linejoin="round"/><path d="M6 12h22" stroke="#e2f8ff" stroke-width="2"/></svg>`
+const ammoIcon = (a) =>
+  `<svg viewBox="0 0 40 112"><path d="M20 3C10 12 5 27 5 44v8h30v-8c0-17-5-32-15-41z" fill="${a.tip}" stroke="#1b1b24" stroke-width="3" stroke-linejoin="round"/><rect x="5" y="50" width="30" height="46" rx="2" fill="${a.body}" stroke="#1b1b24" stroke-width="3"/><rect x="3" y="94" width="34" height="13" rx="2" fill="${a.body}" stroke="#1b1b24" stroke-width="3"/><path d="M11 45c0-14 3-25 7-34" stroke="rgba(255,255,255,.45)" stroke-width="3.6" fill="none" stroke-linecap="round"/><rect x="9" y="53" width="4.5" height="40" fill="rgba(255,255,255,.35)"/><rect x="27" y="52" width="5" height="42" fill="rgba(0,0,0,.16)"/><path d="M16.5 70l7 7m0-7l-7 7" stroke="rgba(0,0,0,.18)" stroke-width="1.6"/></svg>`
+const BOOST_NAME = { speed: 'Speed', jump: 'Jump', wins: 'Wins', damage: 'Damage' }
+const BOOST_ICON = { speed: GIFT_ICON.wingBlue, jump: GIFT_ICON.wingRed, wins: GIFT_ICON.potionGold, damage: ICON.pistol }
+const mmss = (t) => {
+  t = Math.ceil(t)
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+}
+const NOT_CONNECTED = 'Robux purchases are not connected yet'
+
+function el(tag, cls, html = '') {
   const e = document.createElement(tag)
-  if (className) e.className = className
-  if (html) e.innerHTML = html
+  if (cls) e.className = cls
+  e.innerHTML = html
   return e
 }
 
-// Outlined text (stroke drawn under the fill; see .ol in hud.css).
-const text = (className, value) => {
-  const e = el('span', `ol ${className}`)
-  e.textContent = value
-  return e
-}
+export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
+  const root = el('div', 'hud')
+  root.innerHTML = `
+    <div class="hud-left">
+      <div class="stat" data-k="rebirths">${ICON.rebirth}<span>0</span></div>
+      <div class="stat" data-k="wins">${ICON.trophy}<span>0</span></div>
+      <div class="tiles">
+        <button class="tile lego purple" data-act="gifts">${ICON.gift}<span>Rewards</span><i class="badge">1</i></button>
+        <button class="tile lego pink" data-act="rebirth">${ICON.rebirth}<span>Rebirth</span><b class="ready ol">READY!</b></button>
+        <button class="tile lego orange" data-act="evolve">${ICON.bullet}<span>Evolve</span></button>
+        <button class="tile lego rainbow" data-act="store">${ICON.basket}<span>Store</span></button>
+      </div>
+    </div>
+    <button class="auto-wins lego gold" data-act="robux">${ICON.trophy}<span>AUTO WINS<small>19 R$</small></span></button>
+    <div class="hud-right">
+      <button class="pass lego gold" data-act="robux">2X WINS</button>
+      <div class="price">ONLY 3 R$</div>
+      <button class="pass lego rainbow" data-act="robux">2X DAMAGE</button>
+      <div class="price">ONLY 3 R$</div>
+      <div class="boost-list"></div>
+    </div>
+    <div class="popups"></div>
+    <button class="click-badge" data-act="tapx2">${ICON.hand}<b class="ol">x2</b></button>
+    <div class="hud-bottom">
+      <button class="shoot-btn lego green" data-act="shoot"><span>SHOOT</span></button>
+      <div class="damage">${ICON.pistol}<span>0 Damage</span></div>
+      <div class="level lego orange"><div class="fill"></div><span class="lv">LEVEL 1</span><span class="rt"></span></div>
+      <div class="buy-row">
+        <button class="lego blue" data-act="robux">${ICON.pistol}<span>+100K</span></button>
+        <button class="lego pink" data-act="robux">${ICON.pistol}<span>+1M</span></button>
+        <button class="lego rainbow" data-act="robux">${ICON.pistol}<span>+10M</span></button>
+      </div>
+    </div>
+    <div class="toast ol"></div>
+    <div class="cine">
+      <div class="bar top"></div><div class="bar bot"></div>
+      <div class="cine-top"><div class="cine-wins">${ICON.trophy}<span>+0 WINS</span></div><div class="cine-count">0 / 0 SMASHED</div></div>
+      <div class="cine-banner"></div>
+      <div class="cine-stuck"><div class="stuck-line"></div><div class="stuck-wins">${ICON.trophy}<span></span></div></div>
+      <div class="cine-flash"></div>
+    </div>
+    <div class="modal-back"><div class="win"><div class="win-head lego"><i class="win-icon"></i><span class="win-title"></span><button class="win-x lego red" data-act="close" aria-label="Close"><span>X</span></button></div><div class="win-body"></div></div><div class="modal lego"><div class="modal-head"><span class="ol modal-title"></span><button class="modal-close lego red" data-act="close">X</button></div><div class="modal-body"></div></div></div>`
+  document.body.appendChild(root)
+  const $ = (s) => root.querySelector(s)
+  const stat = { rebirths: $('[data-k="rebirths"]'), wins: $('[data-k="wins"]') }
+  const tiles = { rewards: $('[data-act="gifts"]'), rebirth: $('[data-act="rebirth"]') }
+  const damageEl = $('.damage span')
+  const level = $('.level')
+  const toastEl = $('.toast')
+  const back = $('.modal-back')
+  const popLayer = $('.popups')
+  const badge = $('.click-badge')
+  const cineEl = $('.cine')
+  const cineWins = $('.cine-wins')
+  const cineCount = $('.cine-count')
+  const cineBanner = $('.cine-banner')
+  const cineStuck = $('.cine-stuck')
+  const cineFlash = $('.cine-flash')
 
-// Gradient-filled outlined text: the outline is a copy behind it (data-t).
-function gradText(className, value) {
-  const e = el('span', `grad ${className}`)
-  setGradText(e, value)
-  return e
-}
-function setGradText(e, value) {
-  e.textContent = value
-  e.dataset.t = value
-}
+  // --- Toast ---
+  let toastTimer = 0
+  function toast(text, seconds = 2.2) {
+    toastEl.textContent = text
+    toastEl.classList.add('show')
+    toastTimer = seconds
+  }
 
-// A HUD button. Fires on pointerdown like the touch controls (no click delay).
-function button(className, html, fn) {
-  const b = el('button', `hud-btn ${className}`, html)
-  b.type = 'button'
-  b.addEventListener('pointerdown', (e) => {
+  // --- Counters ---
+  let shown = { wins: -1, rebirths: -1 }
+  function bump(k) {
+    stat[k].classList.remove('bump')
+    void stat[k].offsetWidth
+    stat[k].classList.add('bump')
+  }
+  function refresh(kind) {
+    const s = game.stats
+    for (const k of ['wins', 'rebirths']) {
+      if (shown[k] !== s[k]) {
+        if (shown[k] >= 0) bump(k)
+        shown[k] = s[k]
+        stat[k].querySelector('span').textContent = game.fmt(s[k])
+      }
+    }
+    damageEl.textContent = `${game.fmt(s.damage)} Damage`
+    const L = game.levelInfo()
+    $('.lv').textContent = `LEVEL ${L.level}`
+    $('.rt').textContent = L.max ? 'MAX - REBIRTH!' : `${game.fmt(s.damage)} / ${game.fmt(L.next)}`
+    level.classList.toggle('notmax', !L.max)
+    $('.level .fill').style.width = `${Math.round(L.progress * 100)}%`
+    tiles.rebirth.classList.toggle('is-ready', L.max)
+    const r = game.giftsReady()
+    tiles.rewards.classList.toggle('has-badge', r > 0)
+    tiles.rewards.querySelector('.badge').textContent = String(r)
+    if (openName === 'gifts') updateGifts()
+    else if (openName === 'rebirth' || (openName && kind !== 'damage')) renderModal(openName)
+  }
+  game.onChange(refresh)
+
+  // --- Modals ---
+  let openName = null
+  const body = $('.modal-body')
+  function row(title, sub, btn, cls, act, disabled = false) {
+    return `<div class="row"><div class="grow ol">${title}<small>${sub}</small></div>${btn ? `<button class="lego ${cls} ol" data-act="${act}" ${disabled ? 'disabled' : ''}>${btn}</button>` : ''}</div>`
+  }
+  function renderModal(name) {
+    const s = game.stats
+    let title = ''
+    let html = ''
+    if (WINDOWS[name]) return renderWindow(name)
+    if (name === 'store') {
+      title = 'Store'
+      html = [
+        ['2X WINS', 'Double every Win', '3 R$'],
+        ['2X DAMAGE', 'Double every training shot', '3 R$'],
+        ['AUTO WINS', 'Wins while you are away', '19 R$'],
+        ['AUTO REBIRTH', 'Rebirth automatically at MAX', '99 R$'],
+        ['+100K Damage', 'Instant damage pack', 'R$'],
+        ['+1M Damage', 'Instant damage pack', 'R$'],
+        ['+10M Damage', 'Instant damage pack', 'R$'],
+        ...TRAINERS.filter((t) => t.robux).map((t) => [`${t.name} plot`, `${t.mult}x Damage / sec, no rebirth needed`, `${t.robux} R$`]),
+      ]
+        .map(([a, b, c]) => row(a, b, c, 'gold', 'robux'))
+        .join('')
+    } else if (name === 'games') {
+      title = '3 Minigames!'
+      html = ['Obby Rush', 'Target Frenzy', 'Bullet Dodge'].map((g) => row(g, 'Coming soon!', 'SOON', 'purple', 'soon')).join('')
+    }
+    $('.modal-title').textContent = title
+    body.innerHTML = html
+  }
+  // --- The reference windows: Playtime Gifts, Rebirth, Evolve Ammo ---------------------
+  const WINDOWS = {
+    gifts: { title: 'Playtime Gifts', icon: ICON.gift, head: 'lime' },
+    rebirth: { title: 'Rebirth', icon: ICON.rebirth, head: 'pink' },
+    evolve: { title: 'Evolve Ammo', icon: ICON.bullet, head: 'pink' },
+  }
+  const win = $('.win')
+  const winBody = $('.win-body')
+  const winHead = $('.win-head')
+  function renderWindow(name) {
+    const w = WINDOWS[name]
+    win.className = `win win-${name}`
+    winHead.className = `win-head lego ${w.head}`
+    $('.win-icon').innerHTML = w.icon
+    $('.win-title').textContent = w.title
+    if (name === 'gifts') {
+      winBody.innerHTML = `<div class="gift-grid">${PLAYTIME_GIFTS.map(
+        (g) => `<button class="gift lego gc-${g.card}" data-act="gift:${g.id}">
+          <span class="g-title${g.title.length > 6 ? ' long' : ''}">${g.title}</span>
+          <span class="g-icon">${GIFT_ICON[g.icon]}</span>
+          <span class="g-val ${g.kind}">${g.kind === 'wins' ? game.fmt(g.amount) : `${BOOSTS[g.boosts[0]]}x (${g.minutes} min)`}</span>
+          <span class="g-btn lego"></span>
+        </button>`,
+      ).join('')}</div>`
+      updateGifts()
+    } else if (name === 'rebirth') {
+      const L = game.levelInfo()
+      const now = game.rebirthMult()
+      const fill = L.max ? 1 : Math.min(1, (L.level - 1 + L.progress) / (L.maxLevel - 1))
+      winBody.innerHTML = `
+        <div class="ba ba-labels"><span>Before:</span><i></i><span>After</span></div>
+        <div class="ba"><div class="ba-box lego yellow">x${now} Damage</div>${ARROW}<div class="ba-box lego yellow">x${now + ECONOMY.rebirthBonus} Damage</div></div>
+        <div class="ba"><div class="ba-box lego lime">Max Lvl ${L.maxLevel}</div>${ARROW}<div class="ba-box lime lego">Max Lvl ${game.maxLevel(game.stats.rebirths + 1)}</div></div>
+        <div class="rb-warn">Rebirthing resets your Damage!</div>
+        <div class="rb-bar lego${L.max ? ' full' : ''}"><div class="rb-fill" style="width:${(fill * 100).toFixed(1)}%"></div><span>Lvl ${L.level}/${L.maxLevel}</span></div>
+        <div class="w-btns"><button class="w-cta lego green${L.max ? '' : ' off'}" data-act="do-rebirth">Rebirth</button><button class="w-cta skip lego" data-act="robux">SKIP ${ECONOMY.rebirthSkipRobux} R$</button></div>`
+    } else if (name === 'evolve') {
+      const cur = game.ammoDef()
+      const next = game.nextAmmo()
+      const card = (a, cls) => `<div class="ammo-card ${cls}"><div class="ammo-in lego">${a ? ammoIcon(a) : '<b class="ammo-max">MAX!</b>'}<span>${a ? a.name : 'Fully Evolved'}</span></div></div>`
+      const mult = (a) => (a ? `<span class="ammo-mult">${ICON.trophy}x${a.wins} Wins</span>` : '<span></span>')
+      const afford = next && game.stats.wins >= next.cost
+      winBody.innerHTML = `
+        <div class="ba ba-labels ev"><span>Before</span><i></i><span>After</span></div>
+        <div class="ba ev">${card(cur, 'ac-slate')}${ARROW}${card(next, 'ac-red')}</div>
+        <div class="ba ev mults">${mult(cur)}<i></i>${mult(next)}</div>
+        <div class="ev-cost">${next ? `${ICON.trophy}<span>Costs ${game.fmt(next.cost)} Wins</span>` : '<span>Your ammo is fully evolved!</span>'}</div>
+        <div class="w-btns"><button class="w-cta lego green${afford ? '' : ' off'}" data-act="evolve-ammo">EVOLVE</button><button class="w-cta skip lego" data-act="robux">SKIP ${AMMO_SKIP_ROBUX} R$</button></div>`
+    }
+  }
+  // Each gift card's button: Claim! (ready), the countdown (waiting) or Claimed.
+  function updateGifts() {
+    for (const g of PLAYTIME_GIFTS) {
+      const card = winBody.querySelector(`[data-act="gift:${g.id}"]`)
+      if (!card) continue
+      const st = game.giftState(g)
+      const text = st === 'ready' ? 'Claim!' : st === 'claimed' ? 'Claimed' : mmss(game.giftIn(g))
+      const btn = card.querySelector('.g-btn')
+      if (btn.textContent !== text) btn.textContent = text
+      if (card.dataset.st !== st) {
+        card.dataset.st = st
+        btn.className = `g-btn lego ${st === 'ready' ? 'green' : st === 'claimed' ? 'grey' : 'hot'}`
+      }
+    }
+  }
+
+  function open(name) {
+    openName = name
+    back.classList.toggle('is-win', !!WINDOWS[name])
+    renderModal(name)
+    back.classList.add('open')
+  }
+  function close() {
+    openName = null
+    back.classList.remove('open')
+  }
+
+  root.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('[data-act]')
+    if (e.target === back) return close()
+    if (!b || b.disabled) return
     e.preventDefault()
     e.stopPropagation()
-    b.classList.remove('pop')
-    void b.offsetWidth // restart the press animation
-    b.classList.add('pop')
-    fn?.(b)
-  })
-  return b
-}
-
-const dot = () => el('span', 'hud-dot')
-
-function tile(name, label, icon, fn, extra) {
-  const b = button(`hud-tile tile-${name}`, `<span class="tile-icon">${icon}</span>`, fn)
-  b.append(text('tile-label', label))
-  if (extra) b.append(extra)
-  return b
-}
-
-function formatTime(ms) {
-  const m = Math.floor(ms / 60000)
-  const s = Math.floor(ms / 1000) % 60
-  const r = Math.floor(ms) % 1000
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}`
-}
-
-// actions: { claim, daily (the calendar), rebirth, pets, boats, engine, partner, trail,
-// autoTrain(on), autoRace(on), boosts (the three boost circles) }, all optional; a menu
-// tile calls the action named after it.
-export function createHud(actions = {}) {
-  const root = el('div', 'hud')
-  const d = HUD.design
-
-  // --- Timer --------------------------------------------------------------------------
-  const timer = el('div', 'hud-timer')
-  const timerText = text('timer-text', '00:00.000')
-  timer.append(timerText)
-
-  // --- Podium: the three racers furthest along, under the timer ------------------------
-  // (in the DOM before the top row so the timer's panel covers the ribbons' tops)
-  const podium = el('div', 'hud-podium')
-  const medals = ['1st', '2nd', '3rd'].map((label, i) => {
-    const m = el('div', `medal medal-${i + 1}`)
-    const face = el('span', 'medal-face')
-    m.append(el('span', 'medal-ribbon', RIBBON), face, gradText('medal-label', label))
-    podium.append(m)
-    return { m, face: { e: face, key: null } }
-  })
-
-  // --- Top-right round buttons -------------------------------------------------------------
-  const tr = el('div', 'hud-tr')
-  for (const [icon, badge, fn] of [
-    ['wheel', true, actions.spin],
-    ['calendar', true, actions.daily],
-  ]) {
-    const b = button(`hud-round round-${icon}`, ICONS[icon], fn)
-    if (badge) b.append(dot())
-    tr.append(b)
-  }
-  // The calendar (Daily Reward) shows its dot only while a day can be claimed (setDailyReady).
-  const calendar = tr.querySelector('.round-calendar')
-  // The wheel (Spin wheel) likewise, while a spin is ready (setSpinCount).
-  const wheel = tr.querySelector('.round-wheel')
-
-  // --- Left: CLAIM + tiles --------------------------------------------------------------------
-  const left = el('div', 'hud-left')
-  const claim = button('hud-claim', `<span class="claim-gift">${ICONS.gift}</span>`, actions.claim)
-  const claimBadge = el('span', 'claim-badge')
-  const claimCount = text('', '0')
-  claimBadge.append(claimCount)
-  claim.append(claimBadge, gradText('claim-text', 'CLAIM!'))
-  const grid = el('div', 'hud-grid')
-  grid.append(
-    tile('rebirth', 'Rebirth', ICONS.rebirth, actions.rebirth),
-    tile('pets', 'Pets', ICONS.pets, actions.pets),
-    tile('boats', 'Boats', ICONS.boats, actions.boats),
-    tile('engine', 'Engine', ICONS.engine, actions.engine),
-    tile('partner', 'Partner', ICONS.partner, actions.partner),
-    tile('trail', 'Trail', ICONS.trail, actions.trail),
-  )
-  left.append(claim, grid)
-
-  // --- Right: stats, autos, boosts -------------------------------------------------------
-  const right = el('div', 'hud-right')
-
-  const stats = el('div', 'hud-stats')
-  const statEls = {}
-  for (const [key, icon] of [
-    ['trophies', 'trophy'],
-    ['wins', 'bolt'],
-  ]) {
-    const row = el('div', `hud-stat stat-${key}`)
-    statEls[key] = gradText('stat-num', '0')
-    row.append(statEls[key], el('span', 'stat-icon', ICONS[icon]))
-    stats.append(row)
-  }
-
-  const autos = el('div', 'hud-autos')
-  // fn(on) is told the new state. "AUTO " is its own span so touch screens can drop it
-  // and show compact TRAIN / RACE tiles (hud.css).
-  const auto = (label, icon, fn) => {
-    const b = button('hud-auto', `<span class="auto-icon">${ICONS[icon]}</span>`, (btn) => {
-      fn?.(btn.classList.toggle('on'))
-    })
-    const t = text('auto-label', label)
-    t.prepend(el('span', 'auto-pre', 'AUTO '))
-    b.append(t)
-    return b
-  }
-  autos.append(auto('TRAIN', 'bolt', actions.autoTrain), auto('RACE', 'trophy', actions.autoRace))
-
-  const boosts = el('div', 'hud-boosts')
-  for (const [cls, icon, label] of [
-    ['gold', 'trophy', 'x2'],
-    ['blue', 'bolt', 'x2'],
-    ['purple', 'paw', '+3'],
-  ]) {
-    const b = button(`hud-boost boost-${cls}`, `<span class="boost-icon">${ICONS[icon]}</span>`, actions.boosts)
-    b.append(text('boost-label', label))
-    boosts.append(b)
-  }
-  // Two groups so a short touch screen can put them side by side (hud.css).
-  const rightA = el('div', 'right-a')
-  const rightB = el('div', 'right-b')
-  rightA.append(stats)
-  rightB.append(autos, boosts)
-  right.append(rightA, rightB)
-
-  // --- Bottom: race distance bars ----------------------------------------------------------
-  const bottom = el('div', 'hud-bottom')
-  // Bars span 438..1482 px of the reference; segment edges come from HUD.progress.
-  const barLeft = 438
-  const barWidth = 1482 - barLeft
-  const bars = el('div', 'hud-bars')
-  HUD.progress.forEach((row, r) => {
-    const rowEl = el('div', `bar-row bar-row-${r}`)
-    let from = r === HUD.progress.length - 1 ? 462 : barLeft
-    rowEl.style.marginLeft = `${((from - barLeft) / barWidth) * 100}%`
-    const rowWidth = 1482 - from
-    for (const seg of row) {
-      const s = el('div', 'bar-seg')
-      s.style.width = `${((seg.at - from) / rowWidth) * 100}%`
-      s.style.background = seg.color
-      s.append(text('bar-label', seg.label))
-      rowEl.append(s)
-      from = seg.at
-    }
-    bars.append(rowEl)
-  })
-  bars.firstChild.append(el('span', 'bar-gem', ICONS.gem))
-  // Distance -> { row, x (reference px) }: the finest row that reaches it.
-  // Each row starts where the one below ends (0 / 2K / 13K).
-  const rows = HUD.progress.map((segs, r) => ({ r, x0: r === HUD.progress.length - 1 ? 440 : barLeft, segs, v0: 0 }))
-  for (let r = rows.length - 2; r >= 0; r--) rows[r].v0 = rows[r + 1].segs.at(-1).to
-  const locate = (distance) => {
-    const d = Math.max(0, distance)
-    const row = rows.findLast((w) => d <= w.segs.at(-1).to) ?? rows[0]
-    let x = row.x0
-    let v = row.v0
-    for (const seg of row.segs) {
-      if (d <= seg.to) return { row: row.r, x: x + ((d - v) / (seg.to - v)) * (seg.at - x) }
-      x = seg.at
-      v = seg.to
-    }
-    return { row: row.r, x }
-  }
-  const place = (e, distance) => {
-    const { row, x } = locate(distance)
-    e.style.left = `${((x - barLeft) / barWidth) * 100}%`
-    e.style.setProperty('--row', row)
-  }
-
-  const racerEls = [] // other racers' heads ({ e, key } slots for paintFace), reused across setRacers calls
-  const marker = el('div', 'bar-marker')
-  const markerHead = { e: el('span', 'marker-head', ICONS.head), key: null }
-  marker.append(el('span', 'marker-arrow'), markerHead.e)
-  bars.append(marker) // after the racers' heads (setRacers inserts before it), so the player stays on top
-  // The player's best distance (setBest): a white line on its row with a BEST tag (styled in race.css).
-  const best = el('span', 'bar-best')
-  best.style.display = 'none'
-  bars.insertBefore(best, marker)
-
-  bottom.append(bars)
-
-  const top = el('div', 'hud-top')
-  top.append(tr) // the race timer (`timer`) is kept off-screen: not shown in the HUD
-  root.append(podium, top, left, right, bottom)
-  document.body.appendChild(root)
-
-  // --- Boxity's reserved areas (setReserved) ------------------------------------------------------
-  // The portal draws its toolbar and chat feed over the top-left corner (the whole top edge on
-  // narrow phones). Each block that would sit under them slides down until it clears them (CSS
-  // `translate`, so its own positioning is untouched), and below any block above it that moved.
-  // Re-laid out on resize, when a block changes size (podium shown, scene mode) and when the
-  // HUD's or the page's classes change (portrait, touch-ui, uiw-open move blocks around).
-  const RESERVED_GAP = 8 // px kept clear under a reserved area
-  const avoiders = [tr, podium, left, right] // top to bottom: a moved block pushes the ones under it
-  let reserved = []
-  let layoutQueued = 0
-  const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
-  function layoutReserved() {
-    layoutQueued = 0
-    for (const e of avoiders) e.style.translate = ''
-    const blocks = reserved.map((a) => ({ left: a.left, right: a.left + a.width, top: a.top, bottom: a.top + a.height }))
-    for (const e of avoiders) {
-      const r = e.getBoundingClientRect()
-      if (!r.width || !r.height || getComputedStyle(e).visibility === 'hidden') continue // not shown (uiw-open hides all but the counters)
-      let push = 0
-      for (let moved = true; moved; ) {
-        moved = false
-        const box = { left: r.left, right: r.right, top: r.top + push, bottom: r.bottom + push }
-        const hit = blocks.find((b) => overlaps(box, b))
-        if (hit) {
-          push = hit.bottom + RESERVED_GAP - r.top // always grows, so this ends
-          moved = true
-        }
+    const act = b.dataset.act
+    if (act === 'close') close()
+    else if (act === 'shoot') onShoot?.()
+    else if (act === 'tapx2') {
+      tapTime = 10
+      badgeLeft = 0
+      badgeWait = 4 + Math.random() * 6
+      toast('x2 Damage for 10 seconds!')
+    } else if (act === 'robux') toast(NOT_CONNECTED)
+    else if (act === 'soon') toast('Minigames are coming soon!')
+    else if (act.startsWith('gift:')) {
+      const g = PLAYTIME_GIFTS.find((x) => x.id === act.slice(5))
+      const st = game.giftState(g)
+      if (st === 'ready') {
+        const msg = game.claimGift(g.id)
+        if (msg) toast(msg)
+        replay(b, 'claimed-pop')
+      } else if (st === 'waiting') toast(`Ready in ${mmss(game.giftIn(g))}!`)
+    } else if (act === 'do-rebirth') {
+      const L = game.levelInfo()
+      if (!L.max) toast(`Reach Lvl ${L.maxLevel} to Rebirth!`)
+      else if (game.rebirth()) {
+        close()
+        onRebirth?.()
       }
-      if (push <= 0) continue
-      e.style.translate = `0 ${push}px`
-      blocks.push({ left: r.left, right: r.right, top: r.top + push, bottom: r.bottom + push })
-    }
-  }
-  // Batched into one pass; a timeout rather than a frame so it also lands in a background tab.
-  const relayout = () => {
-    layoutQueued ||= setTimeout(layoutReserved)
-  }
-  const sized = new ResizeObserver(relayout)
-  for (const e of avoiders) sized.observe(e)
-  const classes = new MutationObserver(relayout)
-  classes.observe(root, { attributes: true, attributeFilter: ['class'] })
-  classes.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    } else if (act === 'evolve-ammo') {
+      const r = game.evolveAmmo()
+      if (r.msg) toast(r.msg)
+      if (r.ok) onEvolve?.(game.ammoDef())
+    } else open(act)
+  })
+  // Pointer events on the HUD must never reach the canvas (no pointer lock / camera drag).
+  for (const ev of ['pointerdown', 'pointerup', 'wheel']) root.addEventListener(ev, (e) => e.target !== root && e.stopPropagation())
 
-  // --- Sizing ------------------------------------------------------------------------------------------
-  function resize() {
-    const vv = window.visualViewport
-    const w = vv?.width ?? window.innerWidth
-    const h = vv?.height ?? window.innerHeight
-    const u = clamp(Math.min(w / d.w, h / d.h), HUD.minScale, HUD.maxScale)
-    root.style.setProperty('--u', `${u}px`)
-    root.classList.toggle('portrait', h > w)
-    root.classList.toggle('short', h <= w && h < 500) // phone landscape
-    relayout()
-  }
-  window.addEventListener('resize', resize)
-  window.visualViewport?.addEventListener('resize', resize)
-  resize()
+  // --- Layout: keep out of Boxity's toolbar + chat rectangles -------------------------------
+  bloxity.onReservedAreas((areas) => {
+    let leftTop = 12
+    let topY = 4
+    const cx = window.innerWidth / 2
+    for (const a of areas) {
+      if (a.left < 260) leftTop = Math.max(leftTop, a.top + a.height + 8)
+      if (a.id !== 'chat' && a.left < cx + 130 && a.left + a.width > cx - 130) topY = Math.max(topY, a.top + a.height + 6)
+    }
+    root.style.setProperty('--left-top', `${leftTop}px`)
+    root.style.setProperty('--top-y', `${topY}px`)
+  })
 
-  // --- State ----------------------------------------------------------------------------------------------
-  const state = { ...HUD.stats }
-  const fmt = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${+(n / 1e3).toFixed(1)}K` : String(n))
-  // Counters roll to their new value (and glow up / blink red when spent) instead of jumping;
-  // spending trophies or lightning plays the purchase sound (audio feedback). Quiet while booting.
-  const shownStat = {}
-  const rolls = {}
-  let rollFrame = 0
-  let live = false
-  setTimeout(() => (live = true), 1500)
-  function roll(now) {
-    rollFrame = 0
-    for (const key of Object.keys(rolls)) {
-      const r = rolls[key]
-      const k = Math.min(1, (now - r.t0) / HUD.rollMs)
-      shownStat[key] = r.from + (r.to - r.from) * (1 - (1 - k) ** 3)
-      statEls[key] && setGradText(statEls[key], fmt(Math.round(shownStat[key])))
-      if (k >= 1) delete rolls[key]
-    }
-    if (Object.keys(rolls).length) rollFrame = requestAnimationFrame(roll)
-  }
-  function setStat(key, value) {
-    const old = state[key]
-    state[key] = value
-    if (!live || old === value || !Number.isFinite(old) || !Number.isFinite(value)) {
-      delete rolls[key]
-      shownStat[key] = value
-      statEls[key] && setGradText(statEls[key], fmt(value))
-      return
-    }
-    const row = statEls[key]?.parentElement
-    if (!row) {
-      shownStat[key] = value
-      return
-    }
-    const cls = value > old ? 'gain' : 'spend'
-    row.classList.remove('gain', 'spend')
-    void row.offsetWidth
-    row.classList.add(cls)
-    if (cls === 'spend' && key !== 'gems') {
-      feedback('spend')
-      burst(lastPress().x, lastPress().y, 'coins') // coins pour out of the button that bought it
-    }
-    rolls[key] = { from: shownStat[key] ?? old, to: value, t0: performance.now() }
-    if (!rollFrame) rollFrame = requestAnimationFrame(roll)
-  }
-  for (const key of Object.keys(state)) setStat(key, state[key])
+  // Short (landscape phone) screens: the training row moves up under AUTO WINS so it
+  // never covers the player standing mid-screen.
 
-  // A head in a slot ({ e, key }): the cartoon look ('player' = the player's own), swapped for the
-  // Bloxity profile picture once it has loaded (kept on the cartoon if it fails). Repaints only
-  // when the racer or picture changes, so a picture isn't reloaded every frame.
-  function paintFace(slot, id, look, pfp) {
-    const key = `${id}|${pfp}`
-    if (slot.key === key) return
-    slot.key = key
-    slot.e.innerHTML = look === 'player' ? ICONS.head : look ? head(look) : ''
-    if (!pfp) return
-    const img = new Image()
-    img.alt = ''
-    img.className = 'racer-pfp'
-    img.draggable = false
-    img.onload = () => slot.key === key && slot.e.replaceChildren(img)
-    img.src = pfp
+  // --- World-anchored popups ---------------------------------------------------------------
+  const pops = []
+  const v = new Vector3()
+  function project(p) {
+    v.set(p.x, p.y, p.z).project(camera)
+    return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight, behind: v.z > 1 }
+  }
+  function popup(world, html, cls, life = 1.3, scale = 1) {
+    const e = el('div', `popup ${cls}`, html)
+    popLayer.appendChild(e)
+    pops.push({ e, p: new Vector3(world.x, world.y, world.z), t: 0, life, dx: (Math.random() - 0.5) * 120, scale })
+    if (pops.length > 40) pops.shift().e.remove()
   }
 
-  // The podium shows the top three of the racers plus the player, by distance.
-  let playerDistance = 0
-  let playerPfp = ''
-  let racers = []
-  function refreshPodium() {
-    const me = { id: 'me', distance: playerDistance, look: 'player', pfp: playerPfp }
-    const ranked = [...racers, me].sort((a, b) => b.distance - a.distance)
-    podium.classList.toggle('empty', racers.length === 0)
-    medals.forEach((md, i) => {
-      const r = ranked[i]
-      md.m.style.visibility = r ? '' : 'hidden'
-      if (r) paintFace(md.face, r.id, r.look, r.pfp || '')
-    })
+  // --- Shot cinematic overlay -----------------------------------------------------------------
+  // Restarts a CSS animation on `e` by toggling class `cls`.
+  function replay(e, cls) {
+    e.classList.remove(cls)
+    void e.offsetWidth
+    e.classList.add(cls)
   }
-  // The player's own Bloxity profile picture ('' = the cartoon head) for the bar marker and podium.
-  function setPfp(url) {
-    playerPfp = url || ''
-    paintFace(markerHead, 'me', 'player', playerPfp)
-    refreshPodium()
-  }
-  // Race distance in the same units as HUD.progress (0..the finish).
-  function setDistance(d) {
-    playerDistance = d
-    place(marker, d)
-    refreshPodium()
-  }
-  // [{ id, name, distance, look, pfp }] for everyone else racing (remote players, race.js).
-  function setRacers(list) {
-    racers = list
-    while (racerEls.length < list.length) {
-      const e = el('span', 'bar-racer')
-      bars.insertBefore(e, marker)
-      racerEls.push({ e, key: null })
+  const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
+  // A zone name drawn its own way (config ZONES[i].banner): one colour + outline, or per-letter colours.
+  function zoneName(z, suffix = '!') {
+    const b = z.banner
+    const text = z.name + suffix
+    const font = b.font ? ` f-${b.font}` : ''
+    if (b.letters) {
+      const letters = [...text].map((ch, i) => `<i style="color:${b.letters[i % b.letters.length]}">${esc(ch)}</i>`).join('')
+      return `<span class="zn lettered${font}" style="--ol:${b.outline};--ink2:${b.ink}">${letters}</span>`
     }
-    racerEls.forEach((r, i) => {
-      const racer = list[i]
-      r.e.style.display = racer ? '' : 'none'
-      if (!racer) return
-      paintFace(r, racer.id ?? racer.name, racer.look, racer.pfp || '')
-      r.e.title = racer.name ?? ''
-      place(r.e, racer.distance)
-    })
-    refreshPodium()
+    return `<span class="zn${font}" style="color:${b.fill};--ol:${b.outline};--ink2:${b.outline}">${esc(text)}</span>`
   }
-  setRacers([]) // remote players appear as they race (race.js)
-  setPfp('')
-  setDistance(0)
+  let cineTotal = 0
+  // The zone fonts are only fetched on first use: ask for them now so the first banner is right.
+  document.fonts?.load?.('400 64px Creepster').catch(() => {})
+  document.fonts?.load?.('400 64px Rye').catch(() => {})
+  const cine = {
+    begin(result) {
+      root.classList.add('cine-on')
+      document.body.classList.add('in-cine')
+      cineEl.className = 'cine on'
+      cineTotal = game.OBJECT_COUNT
+      cineWins.querySelector('span').textContent = '+0 WINS'
+      cineCount.textContent = `0 / ${cineTotal} SMASHED`
+      cineBanner.innerHTML = ''
+      cineStuck.querySelector('.stuck-line').innerHTML = ''
+    },
+    flying() {
+      cineEl.classList.add('flying')
+    },
+    smash(count, wins) {
+      cineEl.classList.add('counting')
+      cineWins.querySelector('span').textContent = `+${game.fmt(wins)} ${wins === 1 ? 'WIN' : 'WINS'}`
+      cineCount.textContent = `${count} / ${cineTotal} SMASHED`
+      replay(cineWins, 'bump')
+    },
+    zone(z) {
+      cineBanner.innerHTML = zoneName(z)
+      replay(cineBanner, 'pop')
+    },
+    stuck(z, wins, all) {
+      cineEl.classList.add('stuck')
+      cineBanner.classList.remove('pop')
+      cineStuck.querySelector('.stuck-line').innerHTML = all ? `<span class="zn" style="color:#ffe23a;--ol:#8a3a00;--ink2:#3a1500">SMASHED EVERYTHING!</span>` : `<span class="stuck-in">STUCK IN</span> ${zoneName(z)}`
+      cineStuck.querySelector('.stuck-wins span').textContent = `+${game.fmt(wins)} ${wins === 1 ? 'WIN' : 'WINS'}!`
+      cineStuck.classList.toggle('none', wins <= 0)
+      replay(cineStuck, 'pop')
+    },
+    leaving() {
+      replay(cineFlash, 'go')
+    },
+    end() {
+      root.classList.remove('cine-on')
+      document.body.classList.remove('in-cine')
+      cineEl.className = 'cine'
+      replay(cineFlash, 'go')
+    },
+  }
 
-  const start = performance.now()
-  let shown = ''
-  let timerMs = null // set by setTimer (a race's own clock); null = time since load
+  const boostList = $('.boost-list')
+  let boostHtml = ''
+  let uiClock = 0
+
+  // Player-anchored badge position.
+  const badgeAt = new Vector3()
+  let shownTraining = false
+  let shownShoot = false
+  const TAP_BOOST_SECONDS = 10
+  const badgeOff = { x: 0, y: 0 }
+  let badgeLeft = 0
+  let badgeWait = 3
+  let badgeShown = false
+  let tapTime = 0
+
   return {
-    root,
-    bottom, // race.js's widgets go in here, above the bars column
-    setStat,
-    getStat: (key) => state[key],
-    // Gifts ready to claim (gifts.js); the badge hides at 0.
-    setClaimCount(n) {
-      claimCount.textContent = String(n)
-      claimBadge.style.display = n > 0 ? '' : 'none'
-      claim.classList.toggle('ready', n > 0) // wiggles for attention (juice.css)
+    toast,
+    // Damage multiplier from tapping the x2 badge.
+    tapMult: () => (tapTime > 0 ? 2 : 1),
+    refresh,
+    open,
+    cine,
+    damagePopup(world, amount, crit) {
+      popup(world, `${ICON.pistol}<span>+${game.fmt(amount)} Damage</span>`, crit ? 'crit' : '', 1.3, crit ? 1.45 : 0.75 + Math.random() * 0.5)
     },
-    // Daily Reward days ready to claim (daily.js): the calendar's dot + wiggle.
-    setDailyReady(n) {
-      calendar.classList.toggle('ready', n > 0)
+    winsPopup(world, amount) {
+      popup(world, `<span>+${game.fmt(amount)} ${amount === 1 ? 'WIN' : 'WINS'}</span>`, 'wins', 2.2, 1.5)
     },
-    // Spins ready on the Spin wheel (spin.js): the wheel's dot + wiggle.
-    setSpinCount(n) {
-      wheel.classList.toggle('ready', n > 0)
+    missPopup(world) {
+      popup(world, '<span>Too weak! Train more</span>', 'miss', 1.8, 1)
     },
-    setDistance,
-    setRacers,
-    setPfp,
-    // Personal best distance on the bar; 0 hides it.
-    setBest(d) {
-      best.style.display = d > 0 ? '' : 'none'
-      if (d > 0) place(best, d)
-    },
-    // Scene mode (the Trails scene): only the round buttons stay.
-    setScene: (on) => root.classList.toggle('scene', on),
-    // Boxity's toolbar / chat rectangles ([{ left, top, width, height }], CSS px) to keep clear of.
-    setReserved(areas) {
-      reserved = areas
-      relayout()
-    },
-    // Show this time (ms) on the timer instead of the time since load; null goes back.
-    setTimer(ms) {
-      timerMs = ms
-    },
-    update() {
-      const t = formatTime(timerMs ?? performance.now() - start)
-      if (t !== shown) timerText.textContent = shown = t
+    // Per frame: popups follow their world point, rise and fade; status classes.
+    update(dt, { training, playerPos, canShoot }) {
+      if (training !== shownTraining) {
+        shownTraining = training
+        root.classList.toggle('training', training)
+      }
+      if (canShoot !== shownShoot) {
+        shownShoot = canShoot
+        root.classList.toggle('can-shoot', canShoot)
+      }
+      for (let i = pops.length - 1; i >= 0; i--) {
+        const p = pops[i]
+        p.t += dt
+        const u = p.t / p.life
+        if (u >= 1) {
+          p.e.remove()
+          pops.splice(i, 1)
+          continue
+        }
+        const s = project(p.p)
+        if (s.behind) {
+          p.e.style.opacity = '0'
+          continue
+        }
+        const pop = u < 0.12 ? 0.6 + (u / 0.12) * 0.6 : 1.2 - Math.min(0.2, (u - 0.12) * 0.6)
+        p.e.style.opacity = String(u < 0.7 ? 1 : 1 - (u - 0.7) / 0.3)
+        p.e.style.transform = `translate(${s.x + p.dx * u}px, ${s.y - 30 - u * 110}px) translate(-50%, -50%) scale(${pop * p.scale})`
+      }
+      if (tapTime > 0) tapTime = Math.max(0, tapTime - dt)
+      // The x2 badge only shows up now and then, at a random spot near the player; tapping it
+      // doubles the Damage gained from training for TAP_BOOST_SECONDS.
+      if (!training) {
+        badgeLeft = 0
+        badgeWait = 3
+      } else if (badgeLeft > 0) {
+        badgeLeft -= dt
+        if (badgeLeft <= 0) badgeWait = 4 + Math.random() * 6
+      } else if ((badgeWait -= dt) <= 0) {
+        const a = Math.random() * Math.PI * 2
+        const r = Math.min(160, window.innerWidth * 0.2) * (0.6 + Math.random() * 0.4)
+        badgeOff.x = Math.cos(a) * r
+        badgeOff.y = Math.sin(a) * r * 0.7 - 40
+        badgeLeft = 5
+      }
+      const showBadge = training && badgeLeft > 0
+      if (showBadge !== badgeShown) {
+        badgeShown = showBadge
+        badge.classList.toggle('show', showBadge)
+      }
+      if (showBadge) {
+        badgeAt.set(playerPos.x, playerPos.y + 1.2, playerPos.z)
+        const s = project(badgeAt)
+        badge.style.transform = `translate(${s.x + badgeOff.x}px, ${s.y + badgeOff.y}px) translate(-50%, -50%)`
+      }
+      if (toastTimer > 0) {
+        toastTimer -= dt
+        if (toastTimer <= 0) toastEl.classList.remove('show')
+      }
+      // Four times a second: the gift countdowns and the active boost chips.
+      uiClock += dt
+      if (uiClock > 0.25) {
+        uiClock = 0
+        if (openName === 'gifts') updateGifts()
+        let html = ''
+        for (const k in game.boosts) {
+          const t = game.boosts[k]
+          if (t > 0) html += `<div class="boost-chip">${BOOST_ICON[k]}<span>${BOOSTS[k]}x ${BOOST_NAME[k]}</span><b>${mmss(t)}</b></div>`
+        }
+        if (html !== boostHtml) boostList.innerHTML = boostHtml = html
+      }
     },
   }
 }

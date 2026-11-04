@@ -17,7 +17,9 @@ export const player = {
   grounded: true,
   facing: SPAWN_FACING, // yaw the character model faces, radians
   dims: { ...PLAYER_DIMS },
-  racing: false, // race.js drives position/renderPosition itself; the controller stands still
+  frozen: false, // true while a shot cinematic plays: no walking, jumping or turning
+  speedMult: 1, // Speed Boost (Playtime Gifts): multiplies walk and sprint speed
+  jumpMult: 1, // Jump Boost: multiplies jump height
 }
 
 const HALF = PLAYER_DIMS.height / 2 // capsule centre above the feet
@@ -89,7 +91,6 @@ function step(dt) {
   prev.x = player.position.x
   prev.y = player.position.y
   prev.z = player.position.z
-  if (player.racing) return
 
   // Camera-relative ground basis.
   const yaw = getYaw()
@@ -97,25 +98,25 @@ function step(dt) {
   const fwdZ = -Math.cos(yaw)
   const rightX = Math.cos(yaw)
   const rightZ = -Math.sin(yaw)
-  const mv = inputState.move
+  const mv = player.frozen ? { x: 0, z: 0 } : inputState.move
   const len = Math.hypot(mv.x, mv.z)
   const scale = len > 1 ? 1 / len : 1
   const wishX = (fwdX * mv.z + rightX * mv.x) * scale
   const wishZ = (fwdZ * mv.z + rightZ * mv.x) * scale
-  const speed = inputState.sprint ? PHYSICS.sprintSpeed : PHYSICS.walkSpeed
+  const speed = (inputState.sprint ? PHYSICS.sprintSpeed : PHYSICS.walkSpeed) * player.speedMult
 
   const rate = !player.grounded ? PHYSICS.airAccel : len > 0.01 ? PHYSICS.accel : PHYSICS.decel
   approach2D(player.velocity, wishX * speed, wishZ * speed, rate * dt)
 
   // Jump: buffered a little before landing, and allowed a little after leaving a ledge.
   if (inputState.jump) {
-    jumpQueued = PHYSICS.jumpBuffer
+    if (!player.frozen) jumpQueued = PHYSICS.jumpBuffer
     inputState.jump = false
   }
   sinceGrounded = player.grounded ? 0 : sinceGrounded + dt
   let jumped = false
   if (jumpQueued > 0 && sinceGrounded <= PHYSICS.coyoteTime) {
-    player.velocity.y = PHYSICS.jumpSpeed
+    player.velocity.y = PHYSICS.jumpSpeed * Math.sqrt(player.jumpMult) // height grows with v^2
     jumpQueued = 0
     sinceGrounded = PHYSICS.coyoteTime + 1
     jumped = true
@@ -149,6 +150,7 @@ function step(dt) {
   }
 
   // The body turns toward its heading; in first person it always faces the view.
+  if (player.frozen) return
   if (isFirstPerson()) player.facing = yaw + Math.PI
   else if (Math.hypot(wishX, wishZ) > 0.05) {
     player.facing = rotateTowards(player.facing, Math.atan2(wishX, wishZ), PHYSICS.turnSpeed * dt)
