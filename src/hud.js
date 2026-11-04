@@ -10,7 +10,7 @@
 import './hud.css'
 import './windows.css'
 import { Vector3 } from 'three'
-import { AMMO_SKIP_ROBUX, BOOSTS, ECONOMY, PLAYTIME_GIFTS, SHOP, TRAINERS } from './config.js'
+import { BOOSTS, ECONOMY, PLAYTIME_GIFTS, SHOP, TRAINERS } from './config.js'
 import * as game from './game.js'
 import * as bloxity from './bloxity.js'
 
@@ -225,7 +225,7 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
         <div class="ba ev">${card(cur, 'ac-slate')}${ARROW}${card(next, 'ac-red')}</div>
         <div class="ba ev mults">${mult(cur)}<i></i>${mult(next)}</div>
         <div class="ev-cost">${next ? `${ICON.trophy}<span>Costs ${game.fmt(next.cost)} Wins</span>` : '<span>Your ammo is fully evolved!</span>'}</div>
-        <div class="w-btns"><button class="w-cta lego green${afford ? '' : ' off'}" data-act="evolve-ammo">EVOLVE</button><button class="w-cta skip lego" data-act="robux">SKIP ${AMMO_SKIP_ROBUX} R$</button></div>`
+        <div class="w-btns"><button class="w-cta lego green${afford ? '' : ' off'}" data-act="evolve-ammo">EVOLVE</button></div>`
     }
   }
   // Each gift card's button: Claim! (ready), the countdown (waiting) or Claimed.

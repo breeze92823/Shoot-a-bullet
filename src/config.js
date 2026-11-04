@@ -478,7 +478,6 @@ export const AMMO = [
   { id: 'plasma', name: 'Plasma Ammo', wins: 8, cost: 1e6, tip: '#ff3df0', body: '#b83dff' },
   { id: 'galaxy', name: 'Galaxy Ammo', wins: 12, cost: 1e7, tip: '#1a2a8a', body: '#3a6bff' },
 ]
-export const AMMO_SKIP_ROBUX = 99 // Evolve window SKIP button (Robux not connected)
 export const NEW_WORLD_AT = Date.UTC(2026, 10, 7, 12, 0, 0) // the ??? board counts down to this
 // Shooters standing on the Shoot Zone pad: none; remote players fill it when online.
 export const NPCS = []
