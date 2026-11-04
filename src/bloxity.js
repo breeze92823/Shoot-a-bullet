@@ -296,6 +296,16 @@ export function toggleCustomizer() {
   }
 }
 
+// Top rows of one Bloxity board: [{ rank, displayName, username, score }], or null (no SDK / failed).
+export async function getTopScores(id, limit = 5) {
+  try {
+    const res = await sdk()?.leaderboard?.getTop?.(id, { limit })
+    return Array.isArray(res?.rows) ? res.rows : null
+  } catch {
+    return null
+  }
+}
+
 // The Bloxity game token the backend verifies (POST /v1/auth/game-token/verify). '' for guests / offline.
 export function getToken() {
   try {

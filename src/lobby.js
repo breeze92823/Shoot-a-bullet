@@ -29,7 +29,6 @@ import {
   GUN_SHOP,
   GUNS,
   ISLAND,
-  NEW_WORLD_AT,
   PALETTE as P,
   PATHS,
   PLOT,
@@ -44,7 +43,9 @@ import { buildPlot } from './plots.js'
 import { buildGunShop } from './gunshop.js'
 import { bake } from './bake.js'
 import { neon, solidBox } from './propkit.js'
-import { signPlane, signSprite } from './signs.js'
+import { signPlane, SIGN_FONT, signFontReady } from './signs.js'
+import { getTopScores } from './bloxity.js'
+import { leaders, onLeaders } from './leaders.js'
 import { buildRange } from './range.js'
 import { mulberry32 } from './textures.js'
 
@@ -197,44 +198,137 @@ export function buildLobby(scene, { addLamp, particles } = {}) {
       range.update(dt, t, eye)
       for (const p of plots) p.update(dt, t, playerPos)
       for (const s of shopPads) s.update(dt, t)
-      board2.update(t)
+      board2.update(t, dt)
       for (const fn of updaters) fn(dt, t)
     },
   }
 }
 
+// The three leaderboards (Wins / Rebirths / Damage): a board twice the size of the old ??? one,
+// repainted from Bloxity's getTop every REFRESH_S seconds. Without the SDK the rows stay empty.
+const BOARD_COLS = [
+  { id: 'wins', title: 'WINS', color: '#ffd54a' },
+  { id: 'rebirths', title: 'REBIRTHS', color: '#ff7ad9' },
+  { id: 'damage', title: 'DAMAGE', color: '#ff6a5a' },
+]
+const BOARD_ROWS = 5
+const BOARD_REFRESH_S = 30
+function compact(n) {
+  n = Number(n) || 0
+  const u = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
+  let i = 0
+  while (Math.abs(n) >= 1000 && i < u.length - 1) {
+    n /= 1000
+    i++
+  }
+  return (i ? (n >= 100 ? n.toFixed(0) : n.toFixed(n >= 10 ? 1 : 2).replace(/\.?0+$/, '')) : String(Math.floor(n))) + u[i]
+}
+function paintBoards(canvas, data) {
+  const ctx = canvas.getContext('2d')
+  const W = canvas.width
+  const H = canvas.height
+  ctx.fillStyle = '#232a28'
+  ctx.fillRect(0, 0, W, H)
+  const colW = W / BOARD_COLS.length
+  ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  BOARD_COLS.forEach((col, c) => {
+    const x0 = c * colW
+    if (c) {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'
+      ctx.fillRect(x0 - 2, 30, 4, H - 60)
+    }
+    ctx.textAlign = 'center'
+    ctx.font = `400 84px ${SIGN_FONT}`
+    ctx.lineWidth = 14
+    ctx.strokeStyle = '#14101c'
+    ctx.strokeText(col.title, x0 + colW / 2, 80)
+    ctx.fillStyle = col.color
+    ctx.fillText(col.title, x0 + colW / 2, 80)
+    const rows = leaders[col.id].rows.length ? leaders[col.id].rows : data[col.id]
+    for (let r = 0; r < BOARD_ROWS; r++) {
+      const y = 190 + r * 105
+      const row = rows?.[r]
+      ctx.fillStyle = r % 2 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.09)'
+      ctx.beginPath()
+      ctx.roundRect(x0 + 24, y - 42, colW - 48, 84, 18)
+      ctx.fill()
+      ctx.font = `400 52px ${SIGN_FONT}`
+      ctx.textAlign = 'left'
+      ctx.fillStyle = r === 0 ? '#ffd54a' : r === 1 ? '#d8dde6' : r === 2 ? '#e0975a' : '#9aa3a0'
+      ctx.fillText(`${r + 1}`, x0 + 46, y + 2)
+      if (!row) continue
+      let name = String(row.name || row.displayName || row.username || 'Player')
+      ctx.font = `400 46px ${SIGN_FONT}`
+      ctx.fillStyle = '#ffffff'
+      while (name.length > 3 && ctx.measureText(name).width > colW * 0.4) name = name.slice(0, -2) + '…'
+      ctx.fillText(name, x0 + 100, y + 2)
+      ctx.textAlign = 'right'
+      ctx.fillStyle = col.color
+      ctx.fillText(compact(row.value ?? row.score), x0 + colW - 46, y + 2)
+    }
+    const rank = leaders[col.id].rank
+    if (rank) {
+      ctx.textAlign = 'center'
+      ctx.font = `400 44px ${SIGN_FONT}`
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(`YOU: #${rank}`, x0 + colW / 2, 190 + BOARD_ROWS * 105 + 60)
+    }
+    if (!rows?.length) {
+      ctx.textAlign = 'center'
+      ctx.font = `400 40px ${SIGN_FONT}`
+      ctx.fillStyle = '#9aa3a0'
+      ctx.fillText(rows ? 'NO SCORES YET' : 'OFFLINE', x0 + colW / 2, 190 + BOARD_ROWS * 105 + 10)
+    }
+  })
+}
+
 function buildChalkboard(root, live, x, z) {
-  span(root, P.woodDark, x - 2.6, 0, z - 0.25, x - 2.1, 2.2, z + 0.25)
-  span(root, P.woodDark, x + 2.1, 0, z - 0.25, x + 2.6, 2.2, z + 0.25)
-  span(root, P.wood, x - 2.8, 1.6, z - 0.3, x + 2.8, 5.2, z + 0.3)
-  span(root, '#232a28', x - 2.4, 1.95, z - 0.36, x + 2.4, 4.85, z + 0.36, { cast: false })
-  const q = signPlane([{ text: '???', size: 150, color: '#ffffff', outline: '#232a28' }], 3.2)
-  q.position.set(x, 3.4, z - 0.4)
-  q.rotation.y = Math.PI
-  live.add(q)
-  const timer = signSprite(timerLines(), 1.3)
-  timer.position.set(x, 6.4, z)
-  live.add(timer)
-  let shownMinute = -1
+  // Twice the old board: frame 11.2 x 7.2 m on 4.4 m posts.
+  span(root, P.woodDark, x - 5.2, 0, z - 0.5, x - 4.2, 4.4, z + 0.5)
+  span(root, P.woodDark, x + 4.2, 0, z - 0.5, x + 5.2, 4.4, z + 0.5)
+  span(root, P.wood, x - 5.6, 3.2, z - 0.6, x + 5.6, 10.4, z + 0.6)
+  span(root, '#232a28', x - 4.8, 3.9, z - 0.72, x + 4.8, 9.7, z + 0.72, { cast: false })
+  const canvas = document.createElement('canvas')
+  canvas.width = 1920
+  canvas.height = 1152
+  const tex = new CanvasTexture(canvas)
+  tex.colorSpace = SRGBColorSpace
+  tex.anisotropy = 8
+  const data = {}
+  const draw = () => {
+    paintBoards(canvas, data)
+    tex.needsUpdate = true
+  }
+  draw()
+  signFontReady.then(draw)
+  onLeaders(draw)
+  const face = new Mesh(new PlaneGeometry(9.6, 5.76), new MeshBasicMaterial({ map: tex, side: DoubleSide, fog: false }))
+  face.position.set(x, 6.8, z - 0.78)
+  face.rotation.y = Math.PI
+  live.add(face)
+  const title = signPlane([{ text: 'LEADERBOARDS', size: 110, color: '#ffffff', outline: '#232a28' }], 7)
+  title.position.set(x, 11.4, z - 0.4)
+  title.rotation.y = Math.PI
+  live.add(title)
+  let age = BOARD_REFRESH_S
+  let busy = false
+  async function refresh() {
+    busy = true
+    const lists = await Promise.all(BOARD_COLS.map((c) => getTopScores(c.id, BOARD_ROWS)))
+    BOARD_COLS.forEach((c, i) => (data[c.id] = lists[i]))
+    busy = false
+    draw()
+  }
   return {
-    update() {
-      const m = Math.floor(Date.now() / 60000)
-      if (m !== shownMinute) {
-        shownMinute = m
-        timer.setLines(timerLines())
+    update(t, dt = 0.016) {
+      age += dt
+      if (age >= BOARD_REFRESH_S && !busy) {
+        age = 0
+        refresh()
       }
     },
   }
-}
-function timerLines() {
-  const left = Math.max(0, NEW_WORLD_AT - Date.now())
-  const d = Math.floor(left / 86400000)
-  const h = Math.floor((left % 86400000) / 3600000)
-  const m = Math.floor((left % 3600000) / 60000)
-  return [
-    { text: 'ADMIN ABUSE • NEW WORLD', size: 48, color: '#ffffff' },
-    { text: `IN ${d}D ${h}H ${m}M`, size: 48, color: '#ffffff' },
-  ]
 }
 
 export { STUD }

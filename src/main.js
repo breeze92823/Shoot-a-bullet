@@ -20,6 +20,7 @@ import { applyAim, createShooting } from './shooting.js'
 import { createHud } from './hud.js'
 import * as game from './game.js'
 import { initNet } from './net.js'
+import { createRemotePlayers } from './remote.js'
 import { installAudio, setSuspended, sfx, updateAudio } from './audio.js'
 
 // Boot order: Bloxity SDK -> renderer -> Rapier (async wasm) -> sea + sky + lighting,
@@ -108,6 +109,7 @@ function evolveFx(ammo) {
   const p = playerGroup.position
   particles.burst(p.x, p.y + 1.4, p.z, 50, { speed: 8, up: 5, colors: [ammo.tip, ammo.body, '#ffffff', '#ffd21f'], size: 0.6, life: 1.2, gravity: -8, boost: 2 })
 }
+const remotePlayers = createRemotePlayers(scene, particles)
 const hud = createHud({ camera, onRebirth: rebirthFx, onEvolve: evolveFx, onShoot: () => shooting.requestShot() })
 const shooting = createShooting(scene, lobby, particles, {
   unlocked: game.trainerUnlocked,
@@ -151,6 +153,18 @@ let animator = null
 let generation = 0
 let avatarReady = false
 
+// What other players see of us (sent to the room by remote.send when it changes).
+let lookSnap = null
+function refreshLook() {
+  const user = bloxity.authState.user
+  const equipped = user ? bloxity.getEquippedAvatar() : null
+  const proportions = user ? bloxity.getProportions() : null
+  const skin = bloxity.getSkinTextureUrl() || ''
+  const lookMsg = { equipped, proportions, skin }
+  lookSnap = { look: JSON.stringify(lookMsg), lookMsg }
+}
+refreshLook()
+
 function equipGun() {
   if (avatar) shooting.equip(avatar)
 }
@@ -177,6 +191,7 @@ async function loadAvatar() {
     if (mine !== generation) return
     applyProportions(group, bloxity.authState.user ? bloxity.getProportions() : null)
     setAvatar(group)
+    refreshLook()
   } finally {
     if (mine === generation) avatarReady = true
   }
@@ -191,7 +206,10 @@ bloxity.subscribeAuth((s) => {
   }
 })
 bloxity.onAvatarChanged(loadAvatar)
-bloxity.onProportionsChanged(() => applyProportions(avatar, bloxity.getProportions()))
+bloxity.onProportionsChanged(() => {
+  applyProportions(avatar, bloxity.getProportions())
+  refreshLook()
+})
 bloxity.onRespawnRequest(respawn)
 
 // Ad breaks (required): freeze the game and silence it until the break ends.
@@ -298,6 +316,8 @@ const clock = new Clock()
 let shownLoading = true
 let readySince = 0
 const focus = new Vector3()
+let shotCount = 0
+let lastRecoil = 0
 
 renderer.setAnimationLoop(() => {
   if (adBreak) {
@@ -327,6 +347,24 @@ renderer.setAnimationLoop(() => {
   // tracers and flashes leave the gun where it is drawn (last frame's aim level).
   applyAim(animator?.rig, shooting.aimLevel(), shooting.recoil())
   const st = shooting.update(dt, elapsed, shootCtx)
+  // Other players: stream our pose, draw theirs.
+  const recoilNow = shooting.recoil()
+  if (recoilNow > lastRecoil + 0.01) shotCount = (shotCount + 1) & 0xffff
+  lastRecoil = recoilNow
+  remotePlayers.send(dt, {
+    ...lookSnap,
+    pose: {
+      x: p.x, y: p.y, z: p.z,
+      facing: player.facing,
+      speed: Math.hypot(player.velocity.x, player.velocity.z),
+      vy: player.velocity.y,
+      grounded: player.grounded,
+      aim: shooting.aimLevel(),
+      shots: shotCount,
+      gun: game.stats.gun,
+    },
+  })
+  remotePlayers.update(dt, p)
   shopPads()
 
   updateCamera(camera, dt)

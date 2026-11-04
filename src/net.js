@@ -10,6 +10,7 @@ import { Client } from '@colyseus/sdk'
 import { DEV_MODE, NET, SERVER_URL } from './config.js'
 import * as bloxity from './bloxity.js'
 import { hydrate, onSave, reset, snapshot } from './game.js'
+import { setLeaders } from './leaders.js'
 
 export const net = {
   room: null,
@@ -86,6 +87,7 @@ function attach(room) {
     loadedId = sentId
     saveNow()
   })
+  room.onMessage('leaderboard', (msg) => setLeaders(msg))
   room.onMessage('serverError', () => {
     // The save exists but could not be read: never overwrite it.
     net.hydrated = false

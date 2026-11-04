@@ -27,6 +27,7 @@ export const NET = {
 export const BOARDS = [
   { id: 'rebirths', label: 'Rebirths', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
   { id: 'wins', label: 'Wins', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'damage', label: 'Damage', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
 ]
 
 // --- World (metres: +X east, +Z south, +Y up) -------------------------------
