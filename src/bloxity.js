@@ -2,7 +2,7 @@
 // here may throw when the SDK is missing: a blocked sdk.bloxity.io leaves the
 // game fully playable on the default avatar and keyboard controls.
 // Docs: https://docs.bloxity.io/#html5
-import { GAME_SLUG, GAME_TITLE, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
+import { BOARDS, GAME_SLUG, GAME_TITLE, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
 
 export function sdk() {
   if (DEV_MODE) return null
@@ -24,6 +24,7 @@ const proportionListeners = new Set()
 const authListeners = new Set()
 const settingListeners = new Set()
 const respawnListeners = new Set()
+const adBreakListeners = new Set()
 const unsubscribers = []
 
 function emit(listeners, ...args) {
@@ -60,6 +61,13 @@ export function onSetting(fn) {
 export function onRespawnRequest(fn) {
   respawnListeners.add(fn)
   return () => respawnListeners.delete(fn)
+}
+
+// fn(true) when a Bloxity ad break starts and fn(false) when it ends: pause the game and mute
+// the sound for the duration (required by the platform).
+export function onAdBreak(fn) {
+  adBreakListeners.add(fn)
+  return () => adBreakListeners.delete(fn)
 }
 
 // --- Auth ---------------------------------------------------------------
@@ -183,6 +191,22 @@ export function init() {
       }),
     )
 
+    // Leaderboards are declared once on boot; the backend reports the scores from saved progress.
+    try {
+      SDK.leaderboard?.define?.(BOARDS)
+    } catch (err) {
+      console.warn('[bloxity] leaderboard.define failed', err)
+    }
+
+    // Ad breaks: the game pauses and mutes while one plays.
+    try {
+      const ads = SDK.ads
+      if (ads?.onBreakStart) unsubscribers.push(ads.onBreakStart(() => emit(adBreakListeners, true)))
+      if (ads?.onBreakEnd) unsubscribers.push(ads.onBreakEnd(() => emit(adBreakListeners, false)))
+    } catch {
+      // No ads in this build.
+    }
+
     SDK.game.loadingStep('Building the island')
   } catch (err) {
     console.warn('[bloxity] init failed; running without the SDK', err)
@@ -269,6 +293,15 @@ export function toggleCustomizer() {
     sdk()?.avatar.toggleCustomizer()
   } catch {
     // Ignore.
+  }
+}
+
+// The Bloxity game token the backend verifies (POST /v1/auth/game-token/verify). '' for guests / offline.
+export function getToken() {
+  try {
+    return String(sdk()?.auth?.getToken?.() ?? '')
+  } catch {
+    return ''
   }
 }
 

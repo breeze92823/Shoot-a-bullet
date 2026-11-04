@@ -10,7 +10,7 @@
 import './hud.css'
 import './windows.css'
 import { Vector3 } from 'three'
-import { AMMO_SKIP_ROBUX, BOOSTS, ECONOMY, PLAYTIME_GIFTS, TRAINERS } from './config.js'
+import { AMMO_SKIP_ROBUX, BOOSTS, ECONOMY, PLAYTIME_GIFTS, SHOP, TRAINERS } from './config.js'
 import * as game from './game.js'
 import * as bloxity from './bloxity.js'
 
@@ -45,6 +45,7 @@ const mmss = (t) => {
   t = Math.ceil(t)
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
 }
+const shopItem = (id) => SHOP.find((x) => x.id === id)
 const NOT_CONNECTED = 'Robux purchases are not connected yet'
 
 function el(tag, cls, html = '') {
@@ -64,15 +65,14 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
         <button class="tile lego purple" data-act="gifts">${ICON.gift}<span>Rewards</span><i class="badge">1</i></button>
         <button class="tile lego pink" data-act="rebirth">${ICON.rebirth}<span>Rebirth</span><b class="ready ol">READY!</b></button>
         <button class="tile lego orange" data-act="evolve">${ICON.bullet}<span>Evolve</span></button>
-        <button class="tile lego rainbow" data-act="store">${ICON.basket}<span>Store</span></button>
       </div>
     </div>
-    <button class="auto-wins lego gold" data-act="robux">${ICON.trophy}<span>AUTO WINS<small>19 R$</small></span></button>
+    <button class="auto-wins lego gold" data-act="shop:autowins">${ICON.trophy}<span>AUTO WINS<small>${game.fmt(shopItem('autowins').cost)} Wins</small></span></button>
     <div class="hud-right">
-      <button class="pass lego gold" data-act="robux">2X WINS</button>
-      <div class="price">ONLY 3 R$</div>
-      <button class="pass lego rainbow" data-act="robux">2X DAMAGE</button>
-      <div class="price">ONLY 3 R$</div>
+      <button class="pass lego gold" data-act="shop:wins2x">2X WINS</button>
+      <div class="price">${game.fmt(shopItem('wins2x').cost)} WINS</div>
+      <button class="pass lego rainbow" data-act="shop:damage2x">2X DAMAGE</button>
+      <div class="price">${game.fmt(shopItem('damage2x').cost)} WINS</div>
       <div class="boost-list"></div>
     </div>
     <div class="popups"></div>
@@ -81,16 +81,12 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
       <button class="shoot-btn lego green" data-act="shoot"><span>SHOOT</span></button>
       <div class="damage">${ICON.pistol}<span>0 Damage</span></div>
       <div class="level lego orange"><div class="fill"></div><span class="lv">LEVEL 1</span><span class="rt"></span></div>
-      <div class="buy-row">
-        <button class="lego blue" data-act="robux">${ICON.pistol}<span>+100K</span></button>
-        <button class="lego pink" data-act="robux">${ICON.pistol}<span>+1M</span></button>
-        <button class="lego rainbow" data-act="robux">${ICON.pistol}<span>+10M</span></button>
-      </div>
     </div>
     <div class="toast ol"></div>
     <div class="cine">
       <div class="bar top"></div><div class="bar bot"></div>
       <div class="cine-top"><div class="cine-wins">${ICON.trophy}<span>+0 WINS</span></div><div class="cine-count">0 / 0 SMASHED</div></div>
+      <div class="dmg-layer"></div>
       <div class="cine-banner"></div>
       <div class="cine-stuck"><div class="stuck-line"></div><div class="stuck-wins">${ICON.trophy}<span></span></div></div>
       <div class="cine-flash"></div>
@@ -144,6 +140,7 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
     level.classList.toggle('notmax', !L.max)
     $('.level .fill').style.width = `${Math.round(L.progress * 100)}%`
     tiles.rebirth.classList.toggle('is-ready', L.max)
+    $('.auto-wins small').textContent = game.hasPerk('autowins') ? 'ACTIVE' : `${game.fmt(shopItem('autowins').cost)} Wins`
     const r = game.giftsReady()
     tiles.rewards.classList.toggle('has-badge', r > 0)
     tiles.rewards.querySelector('.badge').textContent = String(r)
@@ -166,17 +163,14 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
     if (name === 'store') {
       title = 'Store'
       html = [
-        ['2X WINS', 'Double every Win', '3 R$'],
-        ['2X DAMAGE', 'Double every training shot', '3 R$'],
-        ['AUTO WINS', 'Wins while you are away', '19 R$'],
-        ['AUTO REBIRTH', 'Rebirth automatically at MAX', '99 R$'],
-        ['+100K Damage', 'Instant damage pack', 'R$'],
-        ['+1M Damage', 'Instant damage pack', 'R$'],
-        ['+10M Damage', 'Instant damage pack', 'R$'],
-        ...TRAINERS.filter((t) => t.robux).map((t) => [`${t.name} plot`, `${t.mult}x Damage / sec, no rebirth needed`, `${t.robux} R$`]),
-      ]
-        .map(([a, b, c]) => row(a, b, c, 'gold', 'robux'))
-        .join('')
+        ...SHOP.map((it) => {
+          const owned = it.kind === 'perk' && game.hasPerk(it.id)
+          return row(it.label, it.sub, owned ? 'OWNED' : `${game.fmt(it.cost)} Wins`, it.color === 'rainbow' ? 'gold' : it.color, `shop:${it.id}`, owned || s.wins < it.cost)
+        }),
+        ...[
+          ...TRAINERS.filter((t) => t.robux).map((t) => [`${t.name} plot`, `${t.mult}x Damage / sec, no rebirth needed`, `${t.robux} R$`]),
+        ].map(([a, b, c]) => row(a, b, c, 'gold', 'robux')),
+      ].join('')
     } else if (name === 'games') {
       title = '3 Minigames!'
       html = ['Obby Rush', 'Target Frenzy', 'Bullet Dodge'].map((g) => row(g, 'Coming soon!', 'SOON', 'purple', 'soon')).join('')
@@ -219,7 +213,7 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
         <div class="ba"><div class="ba-box lego lime">Max Lvl ${L.maxLevel}</div>${ARROW}<div class="ba-box lime lego">Max Lvl ${game.maxLevel(game.stats.rebirths + 1)}</div></div>
         <div class="rb-warn">Rebirthing resets your Damage!</div>
         <div class="rb-bar lego${L.max ? ' full' : ''}"><div class="rb-fill" style="width:${(fill * 100).toFixed(1)}%"></div><span>Lvl ${L.level}/${L.maxLevel}</span></div>
-        <div class="w-btns"><button class="w-cta lego green${L.max ? '' : ' off'}" data-act="do-rebirth">Rebirth</button><button class="w-cta skip lego" data-act="robux">SKIP ${ECONOMY.rebirthSkipRobux} R$</button></div>`
+        <div class="w-btns"><button class="w-cta lego green${L.max ? '' : ' off'}" data-act="do-rebirth">Rebirth</button></div>`
     } else if (name === 'evolve') {
       const cur = game.ammoDef()
       const next = game.nextAmmo()
@@ -276,6 +270,10 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
       badgeWait = 4 + Math.random() * 6
       toast('x2 Damage for 10 seconds!')
     } else if (act === 'robux') toast(NOT_CONNECTED)
+    else if (act.startsWith('shop:')) {
+      const r = game.buyShop(act.slice(5))
+      if (r.msg) toast(r.msg)
+    }
     else if (act === 'soon') toast('Minigames are coming soon!')
     else if (act.startsWith('gift:')) {
       const g = PLAYTIME_GIFTS.find((x) => x.id === act.slice(5))
@@ -351,6 +349,84 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
     return `<span class="zn${font}" style="color:${b.fill};--ol:${b.outline};--ink2:${b.outline}">${esc(text)}</span>`
   }
   let cineTotal = 0
+  // Damage numbers: one per object the bullet goes through (the HP it tore through), and a
+  // red one on the object it sticks in ("NEED <hp>"). Pooled elements, spawned at the
+  // object's screen point, then flung out in screen space (the camera outruns world anchors).
+  const dmgLayer = $('.dmg-layer')
+  const cineTopEl = $('.cine-top')
+  const dmgs = Array.from({ length: 28 }, () => {
+    const e = el('div', 'dmg', '<b></b><small></small>')
+    dmgLayer.appendChild(e)
+    return { e, b: e.firstChild, sm: e.lastChild, t: 0, life: 0, x: 0, y: 0, vx: 0, vy: 0, g: 0, scale: 1, rot: 0 }
+  })
+  let dmgNext = 0
+  let dmgSide = 1
+  const zoneColor = (z) => z?.banner?.fill ?? z?.banner?.letters?.[0] ?? '#ffd21f'
+  function spawnDmg(world, amount, { zone, big = false, blocked = false, need = 0, index = 0 } = {}) {
+    const s = project(world)
+    if (s.behind) return
+    const d = dmgs[dmgNext]
+    dmgNext = (dmgNext + 1) % dmgs.length
+    const W = window.innerWidth
+    const H = window.innerHeight
+    const k = Math.min(W, H * 1.6) / 1000 // px speeds follow the screen size
+    d.b.textContent = game.fmt(amount)
+    d.sm.textContent = blocked ? `NEED ${game.fmt(need)}` : ''
+    d.e.className = `dmg${big ? ' big' : ''}${blocked ? ' blocked' : ''}`
+    d.e.style.setProperty('--c', zoneColor(zone))
+    d.t = 0
+    dmgSide = -dmgSide
+    if (blocked) {
+      d.life = 2.3
+      d.x = W * 0.5
+      // Just under the SMASHED counter (its place depends on the screen; one layout read, once).
+      d.e.style.opacity = '0'
+      d.y = cineTopEl.getBoundingClientRect().bottom + 6 + d.e.offsetHeight / 2
+      d.vx = 0
+      d.vy = -8 * k
+      d.g = 0
+      d.rot = 0
+      d.scale = 1
+    } else {
+      d.life = big ? 1.05 : 0.75
+      d.x = Math.max(40, Math.min(W - 40, s.x + dmgSide * W * (0.03 + Math.random() * 0.07)))
+      d.y = Math.max(H * 0.3, Math.min(H - 40, s.y + 10 * k))
+      d.vx = dmgSide * (0.26 + Math.random() * 0.3) * Math.max(W, 700) // out to the sides, clear of the zone banner
+      d.vy = -(170 + Math.random() * 170) * k
+      d.g = 1100 * k
+      d.rot = dmgSide * (4 + Math.random() * 8)
+      d.scale = (big ? 1.15 : 0.82) + Math.min(0.45, index / 300) // later objects hit harder: bigger numbers
+    }
+  }
+  function updateDmg(dt) {
+    for (const d of dmgs) {
+      if (d.life <= 0) continue
+      d.t += dt
+      const u = d.t / d.life
+      if (u >= 1) {
+        d.life = 0
+        d.e.style.opacity = '0'
+        continue
+      }
+      d.vy += d.g * dt
+      d.x += d.vx * dt
+      d.y += d.vy * dt
+      d.vx *= Math.exp(-dt * 2.5)
+      const pop = u < 0.08 ? 0.35 + (u / 0.08) * 1.15 : u < 0.18 ? 1.5 - ((u - 0.08) / 0.1) * 0.5 : 1
+      d.e.style.opacity = String(u < 0.65 ? 1 : 1 - (u - 0.65) / 0.35)
+      d.e.style.transform = `translate3d(${d.x}px, ${d.y}px, 0) translate(-50%, -50%) rotate(${d.rot * u}deg) scale(${pop * d.scale})`
+    }
+  }
+  function clearDmg() {
+    for (const d of dmgs) {
+      d.life = 0
+      d.e.style.opacity = '0'
+    }
+  }
+  // The wins counter's bump on every smash: Web Animations, so no forced layout per smash.
+  const cineWinsSpan = cineWins.querySelector('span')
+  const BUMP = [{ transform: 'scale(1)' }, { transform: 'scale(1.14)', offset: 0.4 }, { transform: 'scale(1)' }]
+  let bumpAnim = null
   // The zone fonts are only fetched on first use: ask for them now so the first banner is right.
   document.fonts?.load?.('400 64px Creepster').catch(() => {})
   document.fonts?.load?.('400 64px Rye').catch(() => {})
@@ -364,16 +440,21 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
       cineCount.textContent = `0 / ${cineTotal} SMASHED`
       cineBanner.innerHTML = ''
       cineStuck.querySelector('.stuck-line').innerHTML = ''
+      clearDmg()
     },
     flying() {
       cineEl.classList.add('flying')
     },
     smash(count, wins) {
       cineEl.classList.add('counting')
-      cineWins.querySelector('span').textContent = `+${game.fmt(wins)} ${wins === 1 ? 'WIN' : 'WINS'}`
+      cineWinsSpan.textContent = `+${game.fmt(wins)} ${wins === 1 ? 'WIN' : 'WINS'}`
       cineCount.textContent = `${count} / ${cineTotal} SMASHED`
-      replay(cineWins, 'bump')
+      if (cineWinsSpan.animate) {
+        bumpAnim?.cancel()
+        bumpAnim = cineWinsSpan.animate(BUMP, { duration: 220, easing: 'ease-out' })
+      }
     },
+    hit: spawnDmg,
     zone(z) {
       cineBanner.innerHTML = zoneName(z)
       replay(cineBanner, 'pop')
@@ -394,6 +475,7 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
       document.body.classList.remove('in-cine')
       cineEl.className = 'cine'
       replay(cineFlash, 'go')
+      clearDmg()
     },
   }
 
@@ -430,6 +512,10 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
     },
     // Per frame: popups follow their world point, rise and fade; status classes.
     update(dt, { training, playerPos, canShoot }) {
+      if (game.hasPerk('autorebirth') && game.canRebirth() && game.rebirth()) {
+        toast('Auto Rebirth!')
+        onRebirth?.()
+      }
       if (training !== shownTraining) {
         shownTraining = training
         root.classList.toggle('training', training)
@@ -456,6 +542,7 @@ export function createHud({ camera, onRebirth, onShoot, onEvolve }) {
         p.e.style.opacity = String(u < 0.7 ? 1 : 1 - (u - 0.7) / 0.3)
         p.e.style.transform = `translate(${s.x + p.dx * u}px, ${s.y - 30 - u * 110}px) translate(-50%, -50%) scale(${pop * p.scale})`
       }
+      updateDmg(dt)
       if (tapTime > 0) tapTime = Math.max(0, tapTime - dt)
       // The x2 badge only shows up now and then, at a random spot near the player; tapping it
       // doubles the Damage gained from training for TAP_BOOST_SECONDS.

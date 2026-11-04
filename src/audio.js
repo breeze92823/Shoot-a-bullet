@@ -31,26 +31,23 @@ const played = {} // name -> times played (debug)
 export const audioDebug = () => ({ state: A.ctx?.state ?? 'not started', sounds: Object.keys(A.bank).length, of: Object.keys(RECIPES).length, voices: A.voices, played: { ...played } })
 
 // --- Mute + volume ------------------------------------------------------------------
+// Nothing is stored in the browser: mute lasts this page only. `suspended` is the Bloxity ad break.
 let muted = false
-try {
-  muted = localStorage.getItem(AUDIO.storageKey) === 'muted'
-} catch {
-  // Storage blocked: unmuted.
-}
-const level = () => (muted ? 0 : AUDIO.volume * AUDIO.volume)
+let suspended = false
+const level = () => (muted || suspended ? 0 : AUDIO.volume * AUDIO.volume)
 const muteListeners = new Set()
 export const isMuted = () => muted
 export function setMuted(on) {
   muted = !!on
-  try {
-    localStorage.setItem(AUDIO.storageKey, muted ? 'muted' : 'on')
-  } catch {
-    // This session only.
-  }
   if (A.master) A.master.gain.setTargetAtTime(level(), A.ctx.currentTime, 0.04)
   for (const fn of muteListeners) fn(muted)
 }
 export const toggleMuted = () => setMuted(!muted)
+// Silences everything while a Bloxity ad plays, without touching the player's own mute.
+export function setSuspended(on) {
+  suspended = !!on
+  if (A.master) A.master.gain.setTargetAtTime(level(), A.ctx.currentTime, 0.04)
+}
 
 // --- Seeded random + noise tables -----------------------------------------------------
 function rng(seed) {
@@ -316,6 +313,70 @@ function impact(k, out) {
   k.chain(k.noise('white', 0, 0.08), k.filt('bandpass', 1800, 1), k.env(0.6, 0, 0.0005, 0.04), out)
   k.bell(out, 0.005, [[610, 0.25, 0.45], [1490, 0.15, 0.3]])
 }
+// The round punching through an object: a hard supersonic snap, a mid "thwack" of the
+// material giving way and a short body thump, driven for punch. Layered under every smash.
+function impactHit(k, out) {
+  const R = k.R
+  const v = 1 + (R() - 0.5) * 0.12
+  const hot = k.drive(2.6)
+  hot.connect(out)
+  k.chain(k.noise('white', 0, 0.03), k.filt('highpass', 2600 * v, 0.7), k.env(1, 0, 0.0003, 0.006), hot)
+  k.chain(k.noise('white', 0.001, 0.12), k.filt('bandpass', 850 * v, 1.2), k.env(0.85, 0.001, 0.0008, 0.032), hot)
+  k.chain(k.osc('sine', 150 * v, 46, 0, 0.12), k.env(0.9, 0, 0.0015, 0.085), hot)
+  k.chain(k.noise('brown', 0, 0.2), k.filt('lowpass', 420), k.env(0.6, 0, 0.002, 0.07), hot)
+  k.crackles(out, 0.008, 0.09, 5, 2800, 7000, 0.25, 0.006)
+}
+// Hit marker: a crisp, dry tick (UI bus) for each damage number.
+function hitmark(k, out) {
+  k.chain(k.osc('triangle', 2900, 2500, 0, 0.03), k.filt('highpass', 1200), k.env(0.7, 0, 0.0004, 0.028), out)
+  k.chain(k.noise('white', 0, 0.02), k.filt('highpass', 6500), k.env(0.45, 0, 0.0002, 0.005), out)
+  k.chain(k.osc('sine', 5200, 4800, 0, 0.02), k.env(0.12, 0, 0.0004, 0.015), out)
+}
+// A bullet zipping past the ear: a falling noise sweep with a thin whistle (Doppler).
+function whizz(k, out) {
+  k.chain(k.noise('white', 0, 0.8), k.filt('bandpass', 5200, 2.2, 650, 0, 0.55), k.env(0.9, 0, 0.16, 0.38), out)
+  k.chain(k.osc('sine', 2300, 620, 0.04, 0.5), k.filt('bandpass', 1400, 0.8), k.env(0.25, 0.04, 0.12, 0.32), out)
+  k.chain(k.noise('pink', 0.05, 0.6), k.filt('lowpass', 900, 0.7, 240, 0.05, 0.5), k.env(0.5, 0.05, 0.1, 0.4), out)
+}
+// The open range answering the big shot: the report slapping back off the far walls,
+// each echo later, darker and quieter, over a low rolling rumble.
+function rangeEcho(k, out) {
+  const R = k.R
+  for (const [t, f, vol, d] of [[0.17, 1500, 0.65, 0.16], [0.38, 1100, 0.45, 0.22], [0.66, 800, 0.3, 0.3], [1.05, 600, 0.18, 0.4]]) {
+    const tt = t + (R() - 0.5) * 0.03
+    k.chain(k.noise('pink', tt, d * 4), k.filt('bandpass', f, 0.8), k.env(vol, tt, 0.006, d), out)
+    k.chain(k.noise('brown', tt, d * 4), k.filt('lowpass', 260), k.env(vol * 0.7, tt, 0.01, d * 1.4), out)
+  }
+  k.chain(k.noise('brown', 0.1, 2.2), k.filt('lowpass', 140, 0.6), k.env(0.5, 0.1, 0.35, 1.3), out)
+}
+// Cinematic sub drop: felt more than heard (the shot, zone breaks, the final hit).
+function subDrop(k, out) {
+  k.chain(k.osc('sine', 68, 27, 0, 1.0), k.drive(1.6), k.env(1, 0, 0.004, 0.85), out)
+  k.chain(k.noise('brown', 0, 0.8), k.filt('lowpass', 110, 0.7), k.env(0.55, 0, 0.004, 0.45), out)
+}
+// The bullet burying itself: a heavy thunk, grit and chips rattling down, and the round
+// humming as it shudders in place (matches range.stick's wobble).
+function embed(k, out) {
+  const R = k.R
+  const hot = k.drive(2.4)
+  hot.connect(out)
+  k.chain(k.osc('sine', 82, 30, 0, 0.45), k.env(1, 0, 0.002, 0.4), hot)
+  k.chain(k.noise('brown', 0, 0.6), k.filt('lowpass', 520), k.env(0.9, 0, 0.002, 0.3), hot)
+  k.chain(k.noise('white', 0, 0.06), k.filt('bandpass', 1600, 1), k.env(0.7, 0, 0.0004, 0.03), hot)
+  // Rubble: bits bouncing, thinning out.
+  for (let i = 0; i < 26; i++) {
+    const t = 0.05 + Math.pow(R(), 1.7) * 1.1
+    const f = 900 + R() * 3800
+    k.chain(k.noise('white', t, 0.04), k.filt('bandpass', f, 3), k.env(0.32 * (1 - t / 1.3), t, 0.0005, 0.01 + R() * 0.02), out)
+  }
+  // The shudder: a low hum with a fast wobble, dying away.
+  const o = k.osc('triangle', 190, 160, 0.02, 1.3)
+  const lfo = k.osc('sine', 22, 14, 0.02, 1.3)
+  const depth = k.env(28, 0.02, 0.01, 1.0)
+  k.chain(lfo, depth)
+  depth.connect(o.frequency)
+  k.chain(o, k.filt('lowpass', 900), k.env(0.32, 0.02, 0.01, 1.05), out)
+}
 // Coin pickup: a two-note bell ding (pitched per smash by playback rate).
 function coin(k, out) {
   k.bell(out, 0, [[N(83), 0.5, 0.06], [N(83) * 2.76, 0.12, 0.04]])
@@ -447,11 +508,17 @@ const RECIPES = {
   shell: [0.15, shell, 4],
   shellPlastic: [0.08, shellPlastic, 2],
   bird: [0.6, bird, 5],
+  impactHit: [0.22, impactHit, 5],
+  hitmark: [0.06, hitmark, 2],
+  whizz: [0.9, whizz, 2],
+  rangeEcho: [2.4, rangeEcho, 2],
+  subDrop: [1.1, subDrop, 1],
+  embed: [1.5, embed, 2],
   ...Object.fromEntries(Object.entries(GUNS).map(([k, p]) => [`gun_${k}`, [0.4 + 1.1 * p.len, gunshot(p), 3]])),
   ...Object.fromEntries(Object.entries(SMASH).map(([k, fn]) => [`smash_${k}`, [k === 'steel' || k === 'diamond' ? 1.1 : 0.55, fn, 4]])),
 }
 // Render order: what the player hears first.
-const FIRST = ['click', 'cock', 'bigShot', 'whoosh', 'shell', 'gun_pistol', 'gun_heavy', 'gun_smg', 'gun_rifle', 'gun_shotgun', 'gun_sniper', 'hit', 'crit', 'step', 'coin', 'stinger', 'smash_target', 'smash_slime']
+const FIRST = ['click', 'cock', 'bigShot', 'rangeEcho', 'subDrop', 'whoosh', 'whizz', 'impactHit', 'hitmark', 'embed', 'shell', 'gun_pistol', 'gun_heavy', 'gun_smg', 'gun_rifle', 'gun_shotgun', 'gun_sniper', 'hit', 'crit', 'step', 'coin', 'stinger', 'smash_target', 'smash_slime']
 
 async function renderOne(seconds, recipe, seed) {
   const sr = SR
@@ -716,24 +783,37 @@ export const sfx = {
     const c = GUN_SOUND[kind] ?? 'pistol'
     play(`gun_${c}`, { vol: 1, rate: 0.95, verb: 0.42 })
     play('bigShot', { vol: 0.8 * (GUN_FX[c]?.boom ?? 0.6), verb: 0.4 })
+    play('subDrop', { vol: 0.55 })
+    play('rangeEcho', { vol: 0.42 * (0.7 + 0.3 * (GUN_FX[c]?.boom ?? 0.6)), verb: 0.3, when: 0.03 })
     play('whoosh', { vol: 0.35, rate: 0.62, when: 0.06 })
+  },
+  // The bullet cam cuts in: the round zips past.
+  whizz() {
+    play('whizz', { vol: 0.5, rate: jit(0.08), pan: -0.25, verb: 0.1 })
   },
   // A casing bouncing on the floor.
   shell(at, vol = 1, plastic = false) {
     play(plastic ? 'shellPlastic' : 'shell', { vol: 0.35 * vol, rate: jit(0.15), at, verb: 0.05, gap: 0.015, low: true })
   },
   // A smash during the flight (the camera rides the bullet, so it is close and centred).
-  smash(kind, count) {
-    play(`smash_${kind}`, { vol: 0.8, rate: jit(0.14), pan: (Math.random() - 0.5) * 0.5, verb: 0.18, gap: 0.018 })
+  // big = the first object of a zone (it hits harder).
+  smash(kind, count, big = false) {
+    const pan = (Math.random() - 0.5) * 0.5
+    play(`smash_${kind}`, { vol: big ? 0.95 : 0.8, rate: jit(0.14) * (big ? 0.9 : 1), pan, verb: 0.18, gap: 0.018 })
+    play('impactHit', { vol: big ? 0.9 : 0.55, rate: jit(0.1) * (big ? 0.82 : 1), pan, verb: 0.08, gap: 0.02 })
+    play('hitmark', { vol: 0.2, rate: 1 + Math.min(0.35, count * 0.004), bus: 'ui', gap: 0.035 })
     const semis = PENTA[(count - 1) % PENTA.length]
-    play('coin', { vol: 0.26, rate: Math.pow(2, semis / 12) * 0.9, bus: 'ui', gap: 0.03 })
+    play('coin', { vol: 0.22, rate: Math.pow(2, semis / 12) * 0.9, bus: 'ui', gap: 0.03 })
   },
   zone() {
     play('stinger', { vol: 0.45, bus: 'ui' })
     play('whoosh', { vol: 0.55, rate: jit(0.15) })
+    play('subDrop', { vol: 0.35, rate: 1.15 })
   },
   stuck(kind, wins) {
-    play('impact', { vol: 1, verb: 0.35 })
+    play('impact', { vol: 0.85, verb: 0.35 })
+    play('embed', { vol: 0.95, verb: 0.25 })
+    play('subDrop', { vol: 0.6, rate: 0.9 })
     if (kind) play(`smash_${kind}`, { vol: 0.5, rate: 0.7 })
     if (wins > 0) {
       play('fanfare', { vol: 0.55, bus: 'ui', when: 0.25 })

@@ -31,7 +31,7 @@ import { PlayerRig, PoseBuffer } from './avatar/rig.js'
 import { makeGun } from './guns.js'
 import { signSprite } from './signs.js'
 import { paintSoftDot } from './textures.js'
-import { gunDef, OBJECT_COUNT, zoneOf } from './game.js'
+import { gunDef, OBJECT_COUNT, objectNeed, zoneOf } from './game.js'
 import { flight, sfx } from './audio.js'
 
 const RIG_SCALE = PLAYER_DIMS.height / RIG_HEIGHT
@@ -159,6 +159,7 @@ function makeFlashPool(scene, n) {
   }
   let next = 0
   return {
+    objects: pool.flatMap((f) => [f.core, f.star, f.tongue]),
     // dir: the barrel's world direction (adds the flame tongue).
     fire(pos, size = 0.9, { color = '#ffd27a', dir = null, life = 0.07 } = {}) {
       const f = pool[next]
@@ -217,6 +218,7 @@ function makeShellPool(scene, n) {
   }
   let next = 0
   return {
+    objects: pool.map((s) => s.m),
     eject(at, right, up, fwd, size, color, floor, onTink) {
       const s = pool[next]
       next = (next + 1) % n
@@ -275,6 +277,7 @@ function makeTracerPool(scene, n) {
   }
   let next = 0
   return {
+    objects: pool.map((t) => t.m),
     fire(from, to) {
       const t = pool[next]
       next = (next + 1) % n
@@ -297,14 +300,16 @@ function makeTracerPool(scene, n) {
 
 
 // The big bullet: brass case, golden nose, a white outline hull (it reads on any
-// background, like the reference), a two-layer flame cone behind it, a halo and a light.
-// `ammo` (config AMMO tier, from Evolve) tints the nose and case; none = classic brass.
-function makeBigBullet(ammo) {
+// background, like the reference), a two-layer flame cone behind it and a halo.
+// Built ONCE and reused (tintBullet per shot): creating materials or a light per shot
+// recompiled shaders mid-shot (the freeze when firing). Its light lives in the scene
+// (createShooting) so the scene's light count never changes.
+function makeBigBullet() {
   const g = new Group()
   const r = 0.34
   const len = r * 3.4
-  const brass = new MeshStandardMaterial({ color: ammo?.body ?? '#f5c23a', metalness: 0.75, roughness: 0.28, emissive: ammo?.body ?? '#c86a10', emissiveIntensity: ammo ? 0.22 : 0.3 })
-  const nose = new MeshStandardMaterial({ color: ammo?.tip ?? '#ffd84a', metalness: 0.7, roughness: 0.3, emissive: ammo?.tip ?? '#d08a10', emissiveIntensity: ammo ? 0.22 : 0.3 })
+  const brass = new MeshStandardMaterial({ color: '#f5c23a', metalness: 0.75, roughness: 0.28, emissive: '#c86a10', emissiveIntensity: 0.3 })
+  const nose = new MeshStandardMaterial({ color: '#ffd84a', metalness: 0.7, roughness: 0.3, emissive: '#d08a10', emissiveIntensity: 0.3 })
   const rim = new MeshStandardMaterial({ color: '#c88a1a', metalness: 0.8, roughness: 0.3 })
   const outline = new MeshBasicMaterial({ color: '#ffffff', side: BackSide, transparent: true, opacity: 0.95, fog: false })
   const body = new CylinderGeometry(r, r, len, 20)
@@ -339,12 +344,19 @@ function makeBigBullet(ammo) {
   halo.scale.setScalar(2.2)
   halo.position.z = len * 0.9
   g.add(halo)
-  // The light sits behind the bullet so it lights the table and objects, not its own case.
-  const light = new PointLight('#ffa040', 28, 16, 2)
-  light.position.set(0, 0, 2.4)
-  g.add(light)
-  g.userData = { flames, halo, light }
+  g.userData = { flames, halo, brass, nose }
   return g
+}
+// `ammo` (config AMMO tier, from Evolve) tints the nose and case; none = classic brass.
+// Colour-only changes: no shader recompile.
+function tintBullet(b, ammo) {
+  const { brass, nose } = b.userData
+  brass.color.set(ammo?.body ?? '#f5c23a')
+  brass.emissive.set(ammo?.body ?? '#c86a10')
+  brass.emissiveIntensity = ammo ? 0.22 : 0.3
+  nose.color.set(ammo?.tip ?? '#ffd84a')
+  nose.emissive.set(ammo?.tip ?? '#d08a10')
+  nose.emissiveIntensity = ammo ? 0.22 : 0.3
 }
 
 // Thin additive streaks the bullet cam rushes past (speed lines).
@@ -360,6 +372,7 @@ function makeStreaks(scene, n) {
   }
   let next = 0
   return {
+    objects: pool.map((s) => s.m),
     spawn(x, y, z, len) {
       const s = pool[next]
       next = (next + 1) % n
@@ -391,6 +404,34 @@ export function createShooting(scene, lobby, particles, hooks) {
   const flashLight = new PointLight('#ffc46b', 0, 12, 2)
   scene.add(flashLight)
   let flashLevel = 0
+  // The Shoot Zone bullet and its light: made once, shown per shot. The light stays in the
+  // scene at intensity 0 (adding / removing a light makes three.js rebuild every material's
+  // shader: that was the freeze on firing and again on the cut back).
+  const bullet = makeBigBullet()
+  bullet.visible = false
+  scene.add(bullet)
+  const bulletLight = new PointLight('#ffa040', 0, 16, 2)
+  scene.add(bulletLight)
+  const LIGHT_MAX = 28
+  const hitPos = new Vector3()
+
+  // Shader warm-up: every pooled effect is drawn for a couple of frames at start (under
+  // the island, uncullled, behind the loading screen) so its programs compile then and
+  // not on the first shot.
+  const warmList = [...flashes.objects, ...tracers.objects, ...streaks.objects, ...shells.objects, bullet]
+  let warmFrames = 3
+  function warmStep() {
+    if (warmFrames <= 0) return
+    warmFrames--
+    const on = warmFrames > 0
+    for (const o of warmList) {
+      o.visible = on
+      o.frustumCulled = !on
+      if (on) o.position.set(0, -40, 0)
+    }
+    if (train.gun && on) train.gun.visible = true
+    bulletLight.intensity = 0
+  }
 
   function muzzle(gun, out) {
     gun.updateWorldMatrix(true, false)
@@ -485,6 +526,8 @@ export function createShooting(scene, lobby, particles, hooks) {
     zone: -1,
     shake: 0,
     exitT: 0, // s since the trigger (the slow-motion exit from the barrel)
+    hitstop: 0, // s of near-frozen time left (zone gates, the final impact)
+    punch: 0, // 0..1 FOV kick from impacts, decays
     kind: 'pistol',
     anchor: new Vector3(), // the gun's grip the aim camera frames (frozen at the trigger)
   }
@@ -513,10 +556,18 @@ export function createShooting(scene, lobby, particles, hooks) {
     seq.zone = -1
     seq.fired = true
     seq.exitT = 0
-    const b = makeBigBullet(hooks.ammo?.())
+    seq.hitstop = 0
+    seq.punch = 0
+    const b = bullet
+    tintBullet(b, hooks.ammo?.())
     b.position.copy(from)
     b.scale.setScalar(0.22)
-    scene.add(b)
+    b.rotation.set(0, 0, 0)
+    b.userData.halo.material.opacity = 0
+    for (const f of b.userData.flames) f.visible = false
+    b.visible = true
+    bulletLight.position.copy(from)
+    bulletLight.intensity = 0
     seq.bullet = b
     // The blast, sized to the gun: flash, smoke, casing, recoil, shake, sparks and its report.
     const p = muzzleFx(train.gun, seq.kind, from, SZ.floorY, 2.2)
@@ -549,20 +600,27 @@ export function createShooting(scene, lobby, particles, hooks) {
     flight.speed(Math.min(1, seq.v / Math.max(1, seq.vmax)))
     b.scale.setScalar(0.22 + 0.78 * k)
     b.rotation.z += dt * 14
-    // Smashes.
+    // Smashes: debris, the material's crunch + a bullet impact, a damage number on each
+    // object it goes through (the HP it tore through), a FOV punch; breaking into a new
+    // zone also freezes time for a beat (hit-stop).
     while (seq.next < r.smashed && seq.pos.z <= range.objectZ(seq.next) + 0.65) {
       const i = seq.next
       range.smash(i, seq.v)
       const z = zoneOf(i)
-      if (z !== seq.zone) {
+      const first = z !== seq.zone
+      if (first) {
         seq.zone = z
         range.flashGate(z)
         ctx.cine?.zone?.(ZONES[z], z)
         sfx.zone()
+        if (i > 0) seq.hitstop = Math.max(seq.hitstop, BULLET.gateStop)
       }
-      sfx.smash(ZONES[z].kind, i + 1)
+      sfx.smash(ZONES[z].kind, i + 1, first)
       ctx.cine?.smash?.(i + 1, r.running[i])
-      seq.shake = Math.min(1, seq.shake + 0.22)
+      range.objectPos(i, hitPos)
+      ctx.cine?.hit?.(hitPos, objectNeed(i), { zone: ZONES[z], big: first, index: i })
+      seq.shake = Math.min(1, seq.shake + (first ? 0.5 : 0.22))
+      seq.punch = Math.min(1, seq.punch + (first ? 0.8 : 0.28))
       seq.next++
     }
     // Trail: fire + sparkles + speed streaks.
@@ -596,14 +654,21 @@ export function createShooting(scene, lobby, particles, hooks) {
     }
     b.userData.halo.material.rotation += dt * 3
     b.userData.halo.material.opacity = 0.4 * heat
-    b.userData.light.intensity = 28 * (0.12 + 0.88 * heat)
+    bulletLight.intensity = LIGHT_MAX * (0.12 + 0.88 * heat)
+    bulletLight.position.set(p.x, p.y, p.z + 2.4 * s) // behind the round: lights the table, not its own case
     if (seq.pos.z <= seq.stopZ + 1e-3) {
       // Stuck (or out of objects: into the end wall).
       seq.phase = 'stuck'
       seq.t = 0
       const all = r.smashed >= OBJECT_COUNT
       const zi = zoneOf(Math.min(r.stuckIn, OBJECT_COUNT - 1))
-      if (!all) range.stick(r.stuckIn)
+      if (!all) {
+        range.stick(r.stuckIn)
+        range.objectPos(r.stuckIn, hitPos)
+        ctx.cine?.hit?.(hitPos, r.damage ?? 0, { zone: ZONES[zi], blocked: true, need: objectNeed(r.stuckIn), index: r.stuckIn })
+      }
+      seq.hitstop = BULLET.stuckStop
+      seq.punch = 1
       seq.shake = 1
       particles.burst(p.x, p.y, p.z - 0.3, 40, { speed: 10, up: 3, colors: ['#ffd35a', '#ff8a2a', '#ffffff', ...ZONES[zi].debris], size: 0.6, life: 0.9, gravity: -8, boost: 2 })
       ctx.cine?.stuck?.(ZONES[zi], r.wins, all)
@@ -614,14 +679,11 @@ export function createShooting(scene, lobby, particles, hooks) {
   }
 
   function endShot(ctx) {
-    if (seq.bullet) {
-      scene.remove(seq.bullet)
-      seq.bullet.traverse((o) => {
-        o.material?.dispose?.()
-        o.geometry?.dispose?.()
-      })
-      seq.bullet = null
-    }
+    bullet.visible = false
+    bulletLight.intensity = 0
+    seq.bullet = null
+    seq.hitstop = 0
+    seq.punch = 0
     range.resetAll()
     seq.phase = 'idle'
     seq.fired = false
@@ -720,24 +782,31 @@ export function createShooting(scene, lobby, particles, hooks) {
 
       // --- The shot sequence.
       if (seq.phase !== 'idle') {
-        seq.t += dt
+        // Hit-stop: the shot's clock nearly stops for a beat on big impacts (effects keep running).
+        let sdt = dt
+        if (seq.hitstop > 0) {
+          seq.hitstop -= dt
+          sdt = dt * BULLET.stopScale
+        }
+        seq.t += sdt
         if (seq.phase === 'aim') {
           player.facing = Math.PI
           if (!seq.fired) {
             if (train.gun) seq.anchor.setFromMatrixPosition(train.gun.matrixWorld) // the aim camera frames the gun from its grip
             if (seq.t >= BULLET.aimTime && train.gun) fireBullet(ctx)
           }
-          if (seq.fired) flyStep(dt, ctx)
+          if (seq.fired) flyStep(sdt, ctx)
           if (seq.fired && seq.exitT >= BULLET.exitTime && seq.phase === 'aim') {
             seq.phase = 'fly'
             ctx.cine?.flying?.()
+            sfx.whizz()
           }
         } else if (seq.phase === 'fly') {
-          flyStep(dt, ctx)
+          flyStep(sdt, ctx)
         } else if (seq.phase === 'stuck') {
           const b = seq.bullet
           if (b) {
-            b.userData.light.intensity = 28 * Math.max(0.25, 1 - seq.t)
+            bulletLight.intensity = LIGHT_MAX * Math.max(0.25, 1 - seq.t)
             b.userData.halo.material.opacity = 0.4 * Math.max(0.2, 1 - seq.t)
             if (Math.random() < 0.4) particles.emit({ x: b.position.x + (Math.random() - 0.5), y: b.position.y + Math.random(), z: b.position.z + 0.6, vy: 1.5, color: '#9a9aa6', size: 0.9, life: 0.8, drag: 1, grow: 1.4, boost: 0.6 })
           }
@@ -784,6 +853,8 @@ export function createShooting(scene, lobby, particles, hooks) {
       shells.update(dt)
       train.recoil *= Math.exp(-dt * 9)
       seq.shake = Math.max(0, seq.shake - dt * 2.6)
+      seq.punch *= Math.exp(-dt * 7)
+      warmStep()
 
       return { training: !!training, plot, inZone, canShoot: inZone && seq.phase === 'idle', cine: seq.phase !== 'idle', phase: seq.phase }
     },
@@ -842,6 +913,8 @@ export function createShooting(scene, lobby, particles, hooks) {
         }
         cam.w = 1
       }
+      // Impact punch: each smash kicks the lens wider (speed); the final hit snaps it in.
+      fov += seq.punch * (ph === 'stuck' ? -9 : 5)
       lookM.lookAt(cam.pos, cam.look, camera.up)
       cam.q.setFromRotationMatrix(lookM)
       const w = cam.w

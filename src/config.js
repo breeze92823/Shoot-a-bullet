@@ -1,11 +1,33 @@
 // Every tunable constant lives here; the rest of src/ holds no theme values.
 
 // --- Identity -------------------------------------------------------------
-export const GAME_SLUG = 'shoot-a-bullet' // slug registered on bloxity.io
+// Game id registered on bloxity.io (My Games). CI passes VITE_GAME_SLUG from the LEGION_GAME_ID variable.
+export const GAME_SLUG = import.meta.env.VITE_GAME_SLUG || 'shoot-a-bullet'
 export const GAME_TITLE = 'Shoot a Bullet'
 
 // Forces the Bloxity SDK and avatar CDN to be treated as unavailable (see .env.example).
 export const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
+
+// Local game server (npm start in Shoot-a-bullet-backend). Empty in deployed builds: they reach the
+// backend through the Bloxity matchmaker (Legion.SDK.net.resolveEndpoint). In dev mode (no SDK) the
+// default is the local server, so progress persists across reloads.
+export const SERVER_URL = import.meta.env.VITE_SERVER_URL || (DEV_MODE ? 'ws://localhost:2567' : '')
+
+// Network timing (net.js), seconds.
+export const NET = {
+  saveEvery: 3, // at most one saveProgress this often
+  saveIdle: 30, // also save this often so the play time moves on while nothing else changes
+  retry: 2, // first reconnect delay; doubles up to retryMax while the matchmaker / server is unreachable
+  retryMax: 30,
+  rejoin: 2, // delay before resolving a new endpoint after the room closes
+}
+
+// Bloxity's own leaderboards (trophy button). Identical to the backend's BLOXITY_BOARDS
+// (src/constants.ts): the server reports the scores from the saved progress, `id` = the stat.
+export const BOARDS = [
+  { id: 'rebirths', label: 'Rebirths', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'wins', label: 'Wins', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+]
 
 // --- World (metres: +X east, +Z south, +Y up) -------------------------------
 export const GROUND_Y = 0
@@ -334,7 +356,9 @@ export const SMASH = { needBase: 5, needGrowth: 1.11, winsBase: 0.89, winsGrowth
 // The flight: bullet speed (m/s) slows from `speed` toward `minSpeed` near its stop.
 // aimTime = s of aiming before the trigger; then the bullet leaves the barrel in slow
 // motion for exitTime s (starting at exitSpeed m/s) before it accelerates and the cam cuts to it.
-export const BULLET = { speed: 46, minSpeed: 16, aimTime: 0.6, exitTime: 1.0, exitSpeed: 2.5, stuckTime: 2.6, returnTime: 0.8 }
+// Hit-stop (game feel): breaking into a new zone freezes the shot for gateStop s, the final
+// impact for stuckStop s; time runs at stopScale meanwhile (effects and the HUD keep moving).
+export const BULLET = { speed: 46, minSpeed: 16, aimTime: 0.6, exitTime: 1.0, exitSpeed: 2.5, stuckTime: 2.6, returnTime: 0.8, gateStop: 0.09, stuckStop: 0.16, stopScale: 0.08 }
 
 // Zones along the table (original themes). `kind` = the object built by range.js;
 // colours: floor/alt (checker), wall (side walls), gate/gateIn (the nested arch),
@@ -352,7 +376,7 @@ export const ZONES = [
 ]
 
 // --- Training plots: stand on a plot's pad to gain its damage every second -------------
-// `rebirths` = rebirths needed; `robux` = premium plot (shown locked, store not connected).
+// `robux` = premium plot (shown locked, store not connected).
 // `at` = [x, z] centre, `face` = yaw of the plot's front (0 = faces +Z / south).
 export const PLOT = { w: 11, d: 15, scale: 0.6 } // plot footprint in build units (front = pad end); scale = units -> metres (6.6 x 9 m, like the reference)
 export const TRAINERS = [
@@ -363,9 +387,9 @@ export const TRAINERS = [
   { id: 'golden', name: 'GOLDEN', mult: 15, rebirths: 8, color: '#f0b70c', top: '#ffe02a', title: '#ffd21f', theme: 'golden', at: [59, -9.5], face: 0 },
   { id: 'amber', name: 'AMBER', mult: 30, rebirths: 11, color: '#f0620c', top: '#ff9a2a', title: '#ff8a1f', theme: 'amber', at: [67, -9.5], face: 0 },
   { id: 'ruby', name: 'RUBY', mult: 60, rebirths: 14, color: '#d0102e', top: '#ff2e4a', title: '#ff3550', theme: 'ruby', at: [75, -9.5], face: 0 },
-  { id: 'amethyst', name: 'AMETHYST', mult: 100, robux: 99, color: '#8a2be2', top: '#b04dff', title: '#c86bff', theme: 'amethyst', at: [8, 44.5], face: Math.PI },
-  { id: 'frost', name: 'FROST', mult: 250, robux: 199, color: '#3fb9ea', top: '#c8f2ff', title: '#dff8ff', theme: 'frost', at: [0, 44.5], face: Math.PI },
-  { id: 'obsidian', name: 'OBSIDIAN', mult: 500, robux: 499, color: '#1d1c26', top: '#34323f', title: '#ffffff', theme: 'obsidian', at: [-8, 44.5], face: Math.PI },
+  { id: 'amethyst', name: 'AMETHYST', mult: 100, rebirths: 17, color: '#8a2be2', top: '#b04dff', title: '#c86bff', theme: 'amethyst', at: [8, 44.5], face: Math.PI },
+  { id: 'frost', name: 'FROST', mult: 250, rebirths: 20, color: '#3fb9ea', top: '#c8f2ff', title: '#dff8ff', theme: 'frost', at: [0, 44.5], face: Math.PI },
+  { id: 'obsidian', name: 'OBSIDIAN', mult: 500, rebirths: 25, color: '#1d1c26', top: '#34323f', title: '#ffffff', theme: 'obsidian', at: [-8, 44.5], face: Math.PI },
 ]
 
 // Plot looks (plots.js), keyed by TRAINERS[i].theme. rim = border bricks (two shades),
@@ -410,8 +434,6 @@ export const ECONOMY = {
   levelScale: 3, // each rebirth multiplies the level thresholds by this
   maxLevel: 10, // max LEVEL before the first rebirth (rebirth there)
   maxLevelPerRebirth: 10, // each rebirth raises the max LEVEL by this (Rebirth window: Max Lvl 10 -> 20)
-  rebirthSkipRobux: 49, // Rebirth window SKIP button (Robux not connected)
-  saveKey: 'shoot-a-bullet-save-v1',
 }
 
 // --- Playtime Gifts (the Rewards tile) -------------------------------------------------
@@ -431,6 +453,18 @@ export const PLAYTIME_GIFTS = [
 // What an active boost multiplies: walk/sprint speed, jump height, Wins per shot, Damage per training shot.
 export const BOOSTS = { speed: 2, jump: 2, wins: 2, damage: 2 }
 
+// --- Store: things bought with Wins instead of Robux ---------------------------------
+// kind 'boost' runs BOOSTS[boost] for `minutes` (stacks onto the time left, per visit);
+// kind 'perk' is a permanent unlock (saved as `perks`).
+// Auto Wins: every `every` s the perk pays `share` of what a Shoot Zone bullet pays right now.
+export const AUTO_WINS = { every: 30, share: 0.25 }
+export const SHOP = [
+  { id: 'wins2x', label: '2X WINS', sub: 'Double every Win for 10 min', kind: 'boost', boost: 'wins', minutes: 10, cost: 25e3, color: 'gold' },
+  { id: 'damage2x', label: '2X DAMAGE', sub: 'Double every training shot for 10 min', kind: 'boost', boost: 'damage', minutes: 10, cost: 25e3, color: 'rainbow' },
+  { id: 'autowins', label: 'AUTO WINS', sub: 'Earn Wins on your own, even while you are away', kind: 'perk', cost: 25e6, color: 'gold' },
+  { id: 'autorebirth', label: 'AUTO REBIRTH', sub: 'Rebirth automatically at MAX', kind: 'perk', cost: 50e6, color: 'pink' },
+]
+
 // --- Evolve Ammo: each tier multiplies the Wins a Shoot Zone bullet pays ---------------
 // The first tier is what you start with. tip / body = bullet colours (window icon + the
 // flying bullet). cost = Wins to evolve INTO that tier.
@@ -446,22 +480,16 @@ export const AMMO = [
 ]
 export const AMMO_SKIP_ROBUX = 99 // Evolve window SKIP button (Robux not connected)
 export const NEW_WORLD_AT = Date.UTC(2026, 10, 7, 12, 0, 0) // the ??? board counts down to this
-// Shooters standing on the Shoot Zone pad (names are made up).
-export const NPCS = [
-  { name: 'BlockyBen', x: -11, z: -16, suit: '#2b2f3a', skin: '#f2c79a', hair: '#3a2416' },
-  { name: 'PixelPaige', x: -5, z: -17, suit: '#e84a8a', skin: '#c98d5e', hair: '#f5d34a' },
-  { name: 'Rex_Builds', x: 6, z: -16.5, suit: '#1d1d22', skin: '#ffd9b3', hair: '#111111' },
-  { name: 'TurboTom', x: 12, z: -17, suit: '#3f7be0', skin: '#8d5a3b', hair: '#1a1a1a' },
-]
+// Shooters standing on the Shoot Zone pad: none; remote players fill it when online.
+export const NPCS = []
 
 // --- Sound (audio.js): everything is synthesised at runtime, no files -----------------
 export const AUDIO = {
   volume: 0.85, // master, 0..1 (perceptual: squared before use)
-  storageKey: 'shoot-a-bullet-sound', // 'muted' | 'on'
   bus: { sfx: 1, ui: 0.55, amb: 0.32 }, // bus levels
   reverb: { seconds: 1.6, decay: 1.1, preDelay: 0.012, send: 0.22 }, // open-air slap + tail
   hearing: { ref: 8, max: 90, rolloff: 1.15 }, // m: full volume inside ref, silent past max
-  maxVoices: 64, // low-priority sounds (NPC shots, crackle, birds) stop at 60% of this
+  maxVoices: 96, // low-priority sounds (NPC shots, crackle, birds) stop at 60% of this
   duckInCine: 0.35, // ambience level while the shot cinematic plays
   stepEvery: 1.9, // m walked per footstep (half an animator stride)
 }

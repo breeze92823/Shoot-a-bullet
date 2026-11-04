@@ -108,6 +108,9 @@ export function buildLobby(scene, { addLamp, particles } = {}) {
   span(root, P.yellow, -W, fy - 0.2, SZ.padBackZ, W, fy, SZ.frontZ, { cast: false })
   span(root, null, -W, fy - 0.2, SZ.backZ, W, fy, SZ.padBackZ, { mat: checkerMat(P.white, P.red, 3), cast: false })
   solidBox(W, (fy + 2.2) / 2, (SZ.frontZ - SZ.backZ) / 2, 0, (fy - 2.2) / 2, (SZ.frontZ + SZ.backZ) / 2)
+  // Invisible wall at the yellow band's north edge: nobody walks past it onto the checker floor / range
+  // (SHOOT's fireAt z sits just inside it).
+  solidBox(W, 4, 0.4, 0, fy + 4, SZ.padBackZ - 1.6 - 0.4)
   const sign = signPlane([{ text: 'SHOOT', size: 120, color: '#ffffff', outline: '#16121c' }, { text: 'ZONE', size: 120, color: '#ffffff', outline: '#16121c' }], 11)
   sign.rotation.x = -Math.PI / 2
   sign.position.set(0, fy + 0.02, (SZ.frontZ + SZ.padBackZ) / 2)

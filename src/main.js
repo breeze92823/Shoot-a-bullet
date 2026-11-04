@@ -19,7 +19,8 @@ import { createParticles } from './particles.js'
 import { applyAim, createShooting } from './shooting.js'
 import { createHud } from './hud.js'
 import * as game from './game.js'
-import { installAudio, sfx, updateAudio } from './audio.js'
+import { initNet } from './net.js'
+import { installAudio, setSuspended, sfx, updateAudio } from './audio.js'
 
 // Boot order: Bloxity SDK -> renderer -> Rapier (async wasm) -> sea + sky + lighting,
 // the lego lobby, player body -> HUD, shooters -> avatar (async, swaps in when
@@ -111,7 +112,7 @@ const hud = createHud({ camera, onRebirth: rebirthFx, onEvolve: evolveFx, onShoo
 const shooting = createShooting(scene, lobby, particles, {
   unlocked: game.trainerUnlocked,
   trainInterval: () => ECONOMY.trainInterval,
-  shot: () => game.shotResult(game.stats.damage),
+  shot: () => ({ ...game.shotResult(game.stats.damage), damage: game.stats.damage }),
   ammo: game.ammoDef,
   // SHOOT: the player steps to the firing spot behind the table, faces north and holds still.
   hold() {
@@ -192,6 +193,16 @@ bloxity.subscribeAuth((s) => {
 bloxity.onAvatarChanged(loadAvatar)
 bloxity.onProportionsChanged(() => applyProportions(avatar, bloxity.getProportions()))
 bloxity.onRespawnRequest(respawn)
+
+// Ad breaks (required): freeze the game and silence it until the break ends.
+let adBreak = false
+bloxity.onAdBreak((on) => {
+  adBreak = on
+  setSuspended(on)
+})
+
+// The game server holds all progress (net.js): it loads on join and every change is saved there.
+initNet()
 
 // --- Modes + keys --------------------------------------------------------------
 onModeChanged((mode) => {
@@ -289,6 +300,10 @@ let readySince = 0
 const focus = new Vector3()
 
 renderer.setAnimationLoop(() => {
+  if (adBreak) {
+    clock.getDelta() // no catch-up jump when the break ends
+    return
+  }
   const dt = Math.min(clock.getDelta(), 0.1) // clamp huge frames (tab switch, breakpoint)
   const elapsed = clock.elapsedTime
   game.tick(dt)

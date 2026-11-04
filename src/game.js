@@ -1,41 +1,47 @@
 // The game rules and the saved progress: Damage (trained on the plots), Wins
 // (earned by shooting a bullet down the range), Rebirths (reset Damage for a
 // bigger multiplier and a higher max level), the guns owned / equipped and the
-// evolved ammo (Wins multiplier). Saved to localStorage. Playtime Gifts and the boosts
+// evolved ammo (Wins multiplier). Saved by the game server (net.js). Playtime Gifts and the boosts
 // they give are per visit and not saved.
-import { AMMO, BOOSTS, ECONOMY, GUNS, PLAYTIME_GIFTS, RANGE, SMASH, TRAINERS, ZONES } from './config.js'
+import { AMMO, AUTO_WINS, BOOSTS, ECONOMY, GUNS, PLAYTIME_GIFTS, RANGE, SHOP, SMASH, TRAINERS, ZONES } from './config.js'
 
-const DEFAULTS = { damage: 0, wins: 0, rebirths: 0, gun: 'glock', owned: ['glock'], ammo: AMMO[0].id, playTime: 0 }
+const DEFAULTS = { damage: 0, wins: 0, rebirths: 0, gun: 'glock', owned: ['glock'], ammo: AMMO[0].id, perks: [], playTime: 0 }
 
-function load() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(ECONOMY.saveKey) || 'null')
-    if (raw && typeof raw === 'object') {
-      const s = { ...DEFAULTS, ...raw }
-      for (const k of ['damage', 'wins', 'rebirths', 'playTime']) if (!Number.isFinite(s[k]) || s[k] < 0) s[k] = 0
-      if (!Array.isArray(s.owned)) s.owned = ['glock']
-      if (!s.owned.includes('glock')) s.owned.push('glock')
-      if (!GUNS.some((g) => g.id === s.gun) || !s.owned.includes(s.gun)) s.gun = 'glock'
-      if (!AMMO.some((a) => a.id === s.ammo)) s.ammo = AMMO[0].id
-      delete s.claimed // the old Rewards chest counter
-      return s
-    }
-  } catch {
-    // A broken save starts fresh.
-  }
-  return { ...DEFAULTS, owned: [...DEFAULTS.owned] }
+// Nothing is stored in the browser: the game server (net.js) loads these on join and saves them,
+// so a guest's or an offline session's progress lasts this page only.
+export const stats = { ...DEFAULTS, owned: [...DEFAULTS.owned], perks: [] }
+const listeners = new Set()
+const saveListeners = new Set()
+
+// What the server saves (backend PlayerDoc): everything in `stats`.
+export function snapshot() {
+  return { damage: stats.damage, wins: stats.wins, rebirths: stats.rebirths, gun: stats.gun, owned: [...stats.owned], ammo: stats.ammo, perks: [...stats.perks], playTime: Math.floor(stats.playTime) }
 }
 
-export const stats = load()
-const listeners = new Set()
-let saveTimer = 0
+// Replaces the state with the server's saved doc (validated: a broken doc never breaks the game).
+export function hydrate(doc) {
+  const s = { ...DEFAULTS, ...(doc && typeof doc === 'object' ? doc : {}) }
+  for (const k of ['damage', 'wins', 'rebirths', 'playTime']) if (!Number.isFinite(s[k]) || s[k] < 0) s[k] = 0
+  if (!Array.isArray(s.owned)) s.owned = ['glock']
+  if (!s.owned.includes('glock')) s.owned.push('glock')
+  if (!GUNS.some((g) => g.id === s.gun) || !s.owned.includes(s.gun)) s.gun = 'glock'
+  if (!AMMO.some((a) => a.id === s.ammo)) s.ammo = AMMO[0].id
+  s.owned = s.owned.filter((id) => GUNS.some((g) => g.id === id))
+  s.perks = Array.isArray(s.perks) ? s.perks.filter((id) => SHOP.some((x) => x.kind === 'perk' && x.id === id)) : []
+  for (const k of Object.keys(DEFAULTS)) stats[k] = s[k]
+  changed('all')
+}
 
-function save() {
-  try {
-    localStorage.setItem(ECONOMY.saveKey, JSON.stringify(stats))
-  } catch {
-    // Private mode / quota: progress lives for this session only.
-  }
+// Back to a new player's state (another account signed in).
+export const reset = () => hydrate(null)
+
+// fn() runs after every change worth saving (net.js sends it to the server, throttled).
+export function onSave(fn) {
+  saveListeners.add(fn)
+  return () => saveListeners.delete(fn)
+}
+const save = () => {
+  for (const fn of saveListeners) fn()
 }
 
 // fn(kind) runs on every change: 'damage', 'wins', 'rebirth', 'gun', 'ammo', 'gift', 'boost', 'all'.
@@ -45,10 +51,13 @@ export function onChange(fn) {
 }
 function changed(kind) {
   for (const fn of listeners) fn(kind)
+  if (kind !== 'boost' && kind !== 'gift') save()
 }
 
-// Called every frame: play time, the Playtime Gifts clock, boost timers and a debounced save.
+// Called every frame: play time, the Playtime Gifts clock and the boost timers.
 let readyShown = 0
+let autoWinsClock = 0
+export const hasPerk = (id) => stats.perks.includes(id)
 export function tick(dt) {
   stats.playTime += dt
   session.time += dt
@@ -60,18 +69,19 @@ export function tick(dt) {
     }
   }
   if (ended) changed('boost')
-  const ready = giftsReady()
+  if (hasPerk('autowins')) {
+    autoWinsClock += dt
+    if (autoWinsClock >= AUTO_WINS.every) {
+      autoWinsClock = 0
+      const w = Math.round(shotResult(stats.damage).wins * AUTO_WINS.share)
+      if (w > 0) addWins(w)
+    }
+  }  const ready = giftsReady()
   if (ready !== readyShown) {
     readyShown = ready
     changed('gift')
   }
-  saveTimer -= dt
-  if (saveTimer <= 0) {
-    saveTimer = 2
-    save()
-  }
 }
-window.addEventListener('beforeunload', save)
 
 // --- Numbers ------------------------------------------------------------------------
 const SUFFIX = ['', 'K', 'M', 'B', 'T', 'Qd', 'Qn', 'Sx']
@@ -85,7 +95,7 @@ export function fmt(n) {
     i++
   }
   const s = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)
-  return s.replace(/\.?0+$/, '') + SUFFIX[i]
+  return (s.includes('.') ? s.replace(/\.?0+$/, '') : s) + SUFFIX[i]
 }
 
 // --- Guns -----------------------------------------------------------------------------
@@ -150,7 +160,6 @@ export function rebirth() {
   stats.rebirths += 1
   stats.damage = 0
   changed('rebirth')
-  save()
   return true
 }
 
@@ -197,7 +206,6 @@ export function evolveAmmo() {
   stats.wins -= n.cost
   stats.ammo = n.id
   changed('ammo')
-  save()
   return { ok: true, msg: `Evolved to ${n.name}! x${n.wins} Wins` }
 }
 
@@ -218,12 +226,29 @@ export function claimGift(id) {
   if (g.kind === 'wins') {
     stats.wins += g.amount
     changed('wins')
-    save()
     return `+${fmt(g.amount)} Wins!`
   }
   for (const k of g.boosts) boosts[k] += g.minutes * 60
   changed('boost')
   return `${g.title}: 2x for ${g.minutes} min!`
+}
+
+// --- Store (SHOP): paid with Wins -----------------------------------------------------------
+export function buyShop(id) {
+  const it = SHOP.find((x) => x.id === id)
+  if (!it) return { ok: false, msg: '' }
+  if (it.kind === 'perk' && hasPerk(it.id)) return { ok: false, msg: `${it.label} is already yours!` }
+  if (stats.wins < it.cost) return { ok: false, msg: `Need ${fmt(it.cost)} Wins!` }
+  stats.wins -= it.cost
+  if (it.kind === 'perk') {
+    stats.perks.push(it.id)
+    changed('wins')
+    return { ok: true, msg: `${it.label} unlocked!` }
+  }
+  boosts[it.boost] += it.minutes * 60
+  changed('wins')
+  changed('boost')
+  return { ok: true, msg: `${BOOSTS[it.boost]}x ${it.boost === 'wins' ? 'Wins' : 'Damage'} for ${it.minutes} min!` }
 }
 
 // Dev console: __game.playtime(775) adds this visit's play time (Playtime Gifts).
@@ -235,5 +260,4 @@ export function devAddPlayTime(sec) {
 export function setStats(patch) {
   Object.assign(stats, patch)
   changed('all')
-  save()
 }
